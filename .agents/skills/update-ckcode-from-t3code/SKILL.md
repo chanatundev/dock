@@ -54,6 +54,14 @@ that overlap a fork feature. Collect every open question from this step, check
 it against [When to ask](#when-to-ask), and ask them all in one batch before
 you start the merge.
 
+Check for architectural changes even when `merge-tree` reports no conflicts.
+Review upstream changes to shared boundaries such as
+`apps/server/src/orchestration-v2`, `packages/contracts`, persistence,
+projections and migrations, provider adapters, MCP services, and desktop IPC.
+For each affected fork feature, record whether it is unaffected, needs a direct
+port, or needs a behavior decision. Treat a redesign that affects a core
+boundary or multiple fork features as an open question before starting the merge.
+
 ## 3. Merge on a sync branch
 
 ```bash
@@ -77,8 +85,11 @@ conflicted. Commit when `git diff --name-only --diff-filter=U` is empty and no
 
 ## Resolution rules
 
-The default is to keep **both** sides: take upstream's change and re-apply the
-fork's intent on top of it. Take one side wholesale only when a row below says so.
+Keep both sides where their behavior is compatible. When upstream and CKcode
+added competing versions of the same behavior, don't choose silently: ask the
+user. Usually recommend upstream's implementation when it covers CKcode's use,
+then retain or port only distinct fork behavior. Take one side wholesale only
+when a row below says so or the user decides.
 
 | Area                                                                                                                                             | Rule                                                                                                                                                                                                                                                                                                                                        |
 | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -125,7 +136,7 @@ only when one of these is true:
 | Trigger                                                                                                                                   | Example question                                                                                       |
 | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | Upstream deleted or redesigned code that a fork feature depends on, and keeping the feature means re-implementing it, not just porting it | "Upstream replaced the command menu that `/pipeline` hooks into. Re-implement it, or drop it for now?" |
-| Upstream shipped a feature that overlaps a fork feature                                                                                   | "Upstream added its own thread goals. Keep the fork's `/goal`, adopt upstream's, or keep both?"        |
+| Upstream and CKcode added conflicting implementations or behavior for the same use                                                     | "Upstream added thread goals while CKcode has `/goal`. Which should win? Recommend upstream if it covers CKcode's goal use; keep or port only distinct CKcode behavior." |
 | Both sides changed the same behavior in incompatible ways, so you can't keep both                                                         | "Both sides changed composer submit on Enter. Which behavior wins?"                                    |
 | Upstream brings back something the fork removed or renamed, in a form the tables don't cover                                              | "Upstream moved update channels into a new settings page. Hide the nightly option there too?"          |
 | A "T3 Code" hit might mean the upstream project rather than this app                                                                      | "'Built on T3 Code' in the About panel: rebrand it, or keep it as credit?"                             |
