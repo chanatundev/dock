@@ -10,21 +10,23 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
-import {
-  Select,
-  SelectItem,
-  SelectPopup,
-  SelectTrigger,
-  SelectValue,
-} from "../ui/select";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import type { ModelEsque } from "./providerIconUtils";
 import { getTriggerDisplayModelName } from "./providerIconUtils";
 
 const STAGES = [
   { id: "plan", label: "Plan", instruction: "Inspect the task and write an actionable plan." },
-  { id: "build", label: "Build", instruction: "Implement the approved plan and report the changes." },
-  { id: "review", label: "Review", instruction: "Review the implementation for bugs and missing requirements." },
+  {
+    id: "build",
+    label: "Build",
+    instruction: "Implement the approved plan and report the changes.",
+  },
+  {
+    id: "review",
+    label: "Review",
+    instruction: "Review the implementation for bugs and missing requirements.",
+  },
 ] as const;
 
 type StageId = (typeof STAGES)[number]["id"];
@@ -35,15 +37,19 @@ function stageDefault(
   models: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>,
   active: StageSelection,
 ): StageSelection {
-  const entry = entries.find((candidate) => candidate.instanceId === active.instanceId) ?? entries[0];
+  const entry =
+    entries.find((candidate) => candidate.instanceId === active.instanceId) ?? entries[0];
   if (!entry) return active;
   const selectedOptions = models.get(entry.instanceId) ?? [];
   return {
     instanceId: entry.instanceId,
     model:
-      entry.instanceId === active.instanceId && selectedOptions.some((model) => model.slug === active.model)
+      entry.instanceId === active.instanceId &&
+      selectedOptions.some((model) => model.slug === active.model)
         ? active.model
-        : (selectedOptions.find((model) => model.isDefault)?.slug ?? selectedOptions[0]?.slug ?? active.model),
+        : (selectedOptions.find((model) => model.isDefault)?.slug ??
+          selectedOptions[0]?.slug ??
+          active.model),
   };
 }
 
@@ -93,10 +99,7 @@ export function PipelinePromptBuilder(props: {
   const optionsByInstance = useMemo(
     () =>
       new Map(
-        props.entries.map((entry) => [
-          entry.instanceId,
-          props.models.get(entry.instanceId) ?? [],
-        ]),
+        props.entries.map((entry) => [entry.instanceId, props.models.get(entry.instanceId) ?? []]),
       ),
     [props.entries, props.models],
   );
@@ -144,7 +147,10 @@ export function PipelinePromptBuilder(props: {
               const selection = selections[stage.id];
               const stageModels = optionsByInstance.get(selection.instanceId) ?? [];
               return (
-                <section key={stage.id} className="grid gap-2 rounded-lg border border-border/70 p-3">
+                <section
+                  key={stage.id}
+                  className="grid gap-2 rounded-lg border border-border/70 p-3"
+                >
                   <div>
                     <h3 className="text-sm font-medium">{stage.label}</h3>
                     <p className="text-xs text-muted-foreground">{stage.instruction}</p>
@@ -153,7 +159,8 @@ export function PipelinePromptBuilder(props: {
                     <Select
                       value={selection.instanceId}
                       onValueChange={(value) =>
-                        value && updateStage(stage.id, { instanceId: ProviderInstanceId.make(value) })
+                        value &&
+                        updateStage(stage.id, { instanceId: ProviderInstanceId.make(value) })
                       }
                       items={props.entries.map((entry) => ({
                         value: entry.instanceId,
@@ -176,7 +183,10 @@ export function PipelinePromptBuilder(props: {
                       onValueChange={(value) => value && updateStage(stage.id, { model: value })}
                       items={stageModels.map((model) => ({ value: model.slug, label: model.name }))}
                     >
-                      <SelectTrigger aria-label={`${stage.label} model`} disabled={stageModels.length === 0}>
+                      <SelectTrigger
+                        aria-label={`${stage.label} model`}
+                        disabled={stageModels.length === 0}
+                      >
                         <SelectValue />
                       </SelectTrigger>
                       <SelectPopup alignItemWithTrigger={false}>
