@@ -79,18 +79,18 @@ describe("electron development launcher", () => {
 
   it("keeps the native Electron executable name inside the branded macOS bundle", () => {
     const paths = resolveMacLauncherPaths(
-      "/repo/apps/desktop/.electron-runtime/CKcode (Dev).app",
-      "CKcode (Dev)",
+      "/repo/apps/desktop/.electron-runtime/dock (Dev).app",
+      "dock (Dev)",
     );
 
-    assert.equal(paths.launcherExecutableName, "CKcode (Dev) Launcher");
+    assert.equal(paths.launcherExecutableName, "dock (Dev) Launcher");
     assert.equal(
       paths.launcherBinaryPath,
-      "/repo/apps/desktop/.electron-runtime/CKcode (Dev).app/Contents/MacOS/CKcode (Dev) Launcher",
+      "/repo/apps/desktop/.electron-runtime/dock (Dev).app/Contents/MacOS/dock (Dev) Launcher",
     );
     assert.equal(
       paths.runtimeElectronBinaryPath,
-      "/repo/apps/desktop/.electron-runtime/CKcode (Dev).app/Contents/MacOS/Electron",
+      "/repo/apps/desktop/.electron-runtime/dock (Dev).app/Contents/MacOS/Electron",
     );
 
     const script = makeDevelopmentLauncherScript({
@@ -101,32 +101,32 @@ describe("electron development launcher", () => {
     });
     assert.include(
       script,
-      "exec '/repo/apps/desktop/.electron-runtime/CKcode (Dev).app/Contents/MacOS/Electron'",
+      "exec '/repo/apps/desktop/.electron-runtime/dock (Dev).app/Contents/MacOS/Electron'",
     );
     assert.notInclude(script, "node_modules/electron");
   });
 
   it("declares why the macOS app needs protected access", () => {
-    const values = resolveMacBundleInfoPlistStrings("CKcode (Dev) Launcher");
+    const values = resolveMacBundleInfoPlistStrings("dock (Dev) Launcher");
 
     assert.equal(
       values.NSScreenCaptureUsageDescription,
-      "CKcode captures the active window when you use the snapshot shortcut.",
+      "dock captures the active window when you use the snapshot shortcut.",
     );
     assert.equal(
       values.NSDocumentsFolderUsageDescription,
-      "CKcode reads project files you open in the desktop app.",
+      "dock reads project files you open in the desktop app.",
     );
   });
 
   it("ad-hoc signs the complete development app bundle", () => {
-    assert.deepEqual(resolveMacCodeSignArguments("/runtime/CKcode (Dev).app"), [
+    assert.deepEqual(resolveMacCodeSignArguments("/runtime/dock (Dev).app"), [
       "--force",
       "--deep",
       "--sign",
       "-",
       "--timestamp=none",
-      "/runtime/CKcode (Dev).app",
+      "/runtime/dock (Dev).app",
     ]);
   });
   it("restores execute permissions on an unchanged launcher", () => {
@@ -142,14 +142,14 @@ describe("electron development launcher", () => {
       NodeFS.rmSync(directory, { recursive: true, force: true });
     }
   });
-  it("derives launcher icons from the desktop CKcode asset", () => {
+  it("derives launcher icons from the desktop dock asset", () => {
     const development = resolveMacLauncherIconPaths("/runtime", true);
     const production = resolveMacLauncherIconPaths("/runtime", false);
 
     // The source icons are real repo paths, joined for the host.
     assert.match(
       development.sourceIconPath,
-      /apps[\\/]desktop[\\/]resources[\\/]branding[\\/]ckcode\.png$/,
+      /apps[\\/]desktop[\\/]resources[\\/]branding[\\/]dock\.png$/,
     );
     assert.equal(development.generatedIconPath, "/runtime/icon-dev.icns");
     assert.equal(production.sourceIconPath, development.sourceIconPath);

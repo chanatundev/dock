@@ -121,10 +121,10 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
 function SidebarBrandMark({ onBackdrop }: { onBackdrop: boolean }) {
   return (
     <span className="inline-flex min-w-0 items-baseline gap-1 text-sm font-medium tracking-tight">
-      {APP_BASE_NAME === "CKcode" ? (
+      {APP_BASE_NAME === "dock" ? (
         <>
           <DesktopBrandMark className="size-5 shrink-0" />
-          <span>CKcode</span>
+          <span>dock</span>
         </>
       ) : (
         <>
@@ -235,7 +235,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           />
         </>
       )}
-      {APP_BASE_NAME === "CKcode" ? <SidebarUpstreamNightlyPill /> : <SidebarUpdatePill />}
+      {APP_BASE_NAME === "dock" ? <SidebarUpstreamNightlyPill /> : <SidebarUpdatePill />}
     </SidebarMenu>
   );
 });

@@ -24,9 +24,9 @@ describe("branding", () => {
       value: {
         desktopBridge: {
           getAppBranding: () => ({
-            baseName: "CKcode",
+            baseName: "dock",
             stageLabel: "Nightly",
-            displayName: "CKcode (Nightly)",
+            displayName: "dock (Nightly)",
           }),
         },
       },
@@ -34,10 +34,10 @@ describe("branding", () => {
 
     const branding = await import("./branding");
 
-    expect(branding.APP_BASE_NAME).toBe("CKcode");
+    expect(branding.APP_BASE_NAME).toBe("dock");
     expect(branding.APP_STAGE_LABEL).toBe("Nightly");
-    expect(branding.APP_DISPLAY_NAME).toBe("CKcode (Nightly)");
-    expect(branding.appBrandCopy("Keep T3 Code open.")).toBe("Keep CKcode open.");
+    expect(branding.APP_DISPLAY_NAME).toBe("dock (Nightly)");
+    expect(branding.appBrandCopy("Keep T3 Code open.")).toBe("Keep dock open.");
   });
 
   it("normalizes hosted app channel metadata", async () => {

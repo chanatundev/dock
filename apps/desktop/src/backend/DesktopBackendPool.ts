@@ -127,7 +127,7 @@ export const layer = Layer.effect(
           );
           yield* electronDialog.showErrorBox(
             "WSL backend is still unavailable",
-            `${reason}\n\nCKcode will use the Windows backend for this launch and retry WSL the next time the app starts.`,
+            `${reason}\n\ndock will use the Windows backend for this launch and retry WSL the next time the app starts.`,
           );
           yield* appSettings.applyWslWindowsFallbackInMemory;
           return true;
@@ -138,7 +138,7 @@ export const layer = Layer.effect(
         });
         yield* electronDialog.showErrorBox(
           "WSL backend couldn't start",
-          `${reason}\n\nFalling back to the Windows backend so CKcode can open. Re-enable the WSL backend from Settings > Connections once the WSL distro is fixed.`,
+          `${reason}\n\nFalling back to the Windows backend so dock can open. Re-enable the WSL backend from Settings > Connections once the WSL distro is fixed.`,
         );
         // Clearing wslBackendEnabled alone would leave a stale wslOnly:true that silently re-traps
         // the user in wsl-only mode the next time they enable WSL. If the persisted write fails,

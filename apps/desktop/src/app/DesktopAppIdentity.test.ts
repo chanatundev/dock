@@ -199,9 +199,16 @@ describe("DesktopAppIdentity", () => {
 
         const runtimeName = calls.setName[0];
         assert.isDefined(runtimeName);
-        assert.equal(runtimeName, `CKcode ${stage}`);
+        assert.equal(runtimeName, `dock ${stage}`);
         assert.match(runtimeName.replaceAll(" ", ""), /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/);
-        assert.equal(calls.setAboutPanelOptions[0]?.applicationName, `CKcode (${stage})`);
+        assert.equal(calls.setAboutPanelOptions[0]?.applicationName, `dock (${stage})`);
+        assert.deepEqual(calls.setName, ["dock Alpha"]);
+        assert.equal(calls.setAboutPanelOptions[0]?.applicationName, "dock (Alpha)");
+        assert.equal(calls.setAboutPanelOptions[0]?.applicationVersion, "1.2.3");
+        assert.equal(calls.setAboutPanelOptions[0]?.version, "0123456789ab");
+        // Packaged: the bundle's own icon stands, so a custom one the user
+        // attached survives.
+        assert.deepEqual(calls.setDockIcon, []);
       }),
       { calls, environment },
     );

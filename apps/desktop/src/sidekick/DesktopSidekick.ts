@@ -55,7 +55,7 @@ export const INITIAL_SIDEKICK_STATUS: DesktopSidekickStatus = {
 export const UNOBSERVED_SIDEKICK_STATUS: DesktopSidekickStatus = {
   state: "offline",
   badgeCount: 0,
-  tooltip: "Open CKcode to see what your agents are doing",
+  tooltip: "Open dock to see what your agents are doing",
   sessions: [],
   moreCount: 0,
 };
@@ -280,7 +280,7 @@ export const make = Effect.gen(function* () {
       window,
       template: [
         {
-          label: idle ? "Open CKcode" : "Open Thread",
+          label: idle ? "Open dock" : "Open Thread",
           click: () => runFork(activate),
         },
         { type: "separator" },

@@ -66,7 +66,7 @@ function resolveSourceTreeIconPath(
   ext: keyof DesktopIconPaths,
 ): string | undefined {
   if (environment.isPackaged || ext === "icns") return undefined;
-  const fileName = ext === "ico" ? "ckcode.ico" : "ckcode.png";
+  const fileName = ext === "ico" ? "dock.ico" : "dock.png";
   return environment.path.join(
     environment.rootDir,
     "apps",
