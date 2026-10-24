@@ -1,5 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -9,9 +11,8 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 import { vi } from "vite-plus/test";
 
-import { readOpenCodeUsage } from "./usage.ts";
+import { openCodeUsageReader, readOpenCodeUsage } from "./usage.ts";
 
-/** A writable connection that stays open until the test's scope closes. */
 const openDatabase = (filename: string) =>
   Layer.build(NodeSqliteClient.layer({ filename })).pipe(
     Effect.map(Context.get(SqlClient.SqlClient)),
@@ -33,7 +34,6 @@ describe("readOpenCodeUsage", () => {
         modelID: "claude-sonnet-4-5",
         time: { created: sinceMs },
         tokens: { input: 100, output: 20 },
-        // Transcript bodies are irrelevant to usage, but can be very large.
         body: "x".repeat(64 * 1024),
       };
       const data = JSON.stringify(message);
@@ -42,7 +42,6 @@ describe("readOpenCodeUsage", () => {
           "INSERT INTO message (rowid, id, session_id, data, time_created) VALUES (?, ?, ?, ?, ?)",
           [rowId, id, "session-1", payload, created],
         );
-      // Sparse IDs, including negative rowids, must not skip records at page boundaries.
       for (let index = 0; index < 130; index++) {
         yield* insert(index * 2 - 10, `msg-${index}`, data);
       }
@@ -81,7 +80,6 @@ describe("readOpenCodeUsage", () => {
         records.reduce((total, record) => total + record.totals.uncachedInputTokens, 0),
         13000,
       );
-      // The fixture exceeds 8 MiB. No query may retain its complete bodies.
       assert.isAbove(largestRawResult, 0);
       assert.isBelow(largestRawResult, 6 * 1024 * 1024);
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -137,5 +135,157 @@ describe("readOpenCodeUsage", () => {
       assert.isAbove(Number((yield* fileSystem.stat(path.join(dir, "opencode.db-wal"))).size), 0);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.effect("reads only legacy OpenCode messages written since the window opened", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-reader-test-" });
+      const sinceMs = 1780000000000;
+      const legacy = path.join(dir, "storage", "message", "session-1");
+      yield* fileSystem.makeDirectory(legacy, { recursive: true });
+      const write = Effect.fn(function* (id: string, mtimeMs: number) {
+        const file = path.join(legacy, `${id}.json`);
+        yield* fileSystem.writeFileString(
+          file,
+          JSON.stringify({
+            id,
+            sessionID: "session-1",
+            role: "assistant",
+            modelID: "claude-sonnet-4-5",
+            time: { created: sinceMs + 1000 },
+            tokens: { input: 100, output: 20 },
+          }),
+        );
+        yield* fileSystem.utimes(file, mtimeMs / 1000, mtimeMs / 1000);
+        return file;
+      });
+      yield* write("msg-old", sinceMs - 60_000);
+
+      const stale = yield* readOpenCodeUsage(dir, sinceMs);
+      assert.deepStrictEqual(stale, { files: [], missing: false, error: false });
+
+      const recent = yield* write("msg-new", sinceMs + 60_000);
+      const result = yield* readOpenCodeUsage(dir, sinceMs);
+      assert.isFalse(result.missing);
+      assert.isFalse(result.error);
+      assert.deepStrictEqual(
+        result.files.map((file) => file.path),
+        [recent],
+      );
+      assert.deepStrictEqual(
+        result.files.flatMap((file) => file.records).map((record) => record.dedupeKey),
+        ["opencode:msg-new"],
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("never follows symlinks in the legacy OpenCode store", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-reader-test-" });
+      const outside = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-reader-test-" });
+      const sinceMs = 1780000000000;
+      const store = path.join(dir, "storage", "message");
+      const session = path.join(store, "session-1");
+      yield* fileSystem.makeDirectory(session, { recursive: true });
+      const write = Effect.fn(function* (directory: string, id: string, mtimeMs: number) {
+        const file = path.join(directory, `${id}.json`);
+        yield* fileSystem.writeFileString(
+          file,
+          JSON.stringify({
+            id,
+            sessionID: "session-1",
+            role: "assistant",
+            modelID: "claude-sonnet-4-5",
+            time: { created: sinceMs + 1000 },
+            tokens: { input: 100, output: 20 },
+          }),
+        );
+        yield* fileSystem.utimes(file, mtimeMs / 1000, mtimeMs / 1000);
+        return file;
+      });
+      const target = yield* write(outside, "msg-linked", sinceMs + 60_000);
+      const stale = yield* write(outside, "msg-stale", sinceMs - 60_000);
+      yield* fileSystem.symlink(target, path.join(session, "msg-linked.json"));
+      yield* fileSystem.symlink(stale, path.join(session, "msg-stale.json"));
+      yield* fileSystem.symlink(outside, path.join(store, "session-linked"));
+      yield* fileSystem.symlink(store, path.join(session, "cycle"));
+      yield* fileSystem.symlink(path.join(outside, "gone.json"), path.join(session, "gone.json"));
+      yield* fileSystem.symlink(path.join(session, "loop.json"), path.join(session, "loop.json"));
+
+      const linksOnly = yield* readOpenCodeUsage(dir, sinceMs);
+      assert.deepStrictEqual(linksOnly, { files: [], missing: true, error: false });
+
+      const real = yield* write(session, "msg-real", sinceMs + 60_000);
+      const result = yield* readOpenCodeUsage(dir, sinceMs);
+      assert.isFalse(result.missing);
+      assert.isFalse(result.error);
+      assert.deepStrictEqual(
+        result.files.map((file) => file.path),
+        [real],
+      );
+      assert.deepStrictEqual(
+        result.files.flatMap((file) => file.records).map((record) => record.dedupeKey),
+        ["opencode:msg-real"],
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
 import * as NodeSqlite from "node:sqlite";
+
+describe("openCodeUsageReader", () => {
+  it.effect("scans canonical instance roots once, including XDG and home defaults", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const temp = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-instances-test-" });
+      const home = yield* fileSystem.realPath(temp);
+      const defaultRoot = path.join(home, ".local", "share", "opencode");
+      const instanceRoot = path.join(home, "instance");
+      const dataHome = path.join(home, "xdg");
+      const xdgRoot = path.join(dataHome, "opencode");
+      const alias = path.join(home, "default-alias");
+      for (const root of [defaultRoot, instanceRoot, xdgRoot]) {
+        yield* fileSystem.makeDirectory(root, { recursive: true });
+      }
+      yield* fileSystem.symlink(defaultRoot, alias);
+      const instances = [
+        { id: "opencode", environment: {}, configured: false },
+        {
+          id: "opencode-list",
+          environment: { OPENCODE_DATA_DIR: ` ${instanceRoot}, ${alias}, ${defaultRoot}, , ` },
+          configured: true,
+        },
+        {
+          id: "opencode-xdg",
+          environment: { XDG_DATA_HOME: dataHome },
+          configured: true,
+        },
+      ];
+      if (openCodeUsageReader.kind !== "scan") throw new Error("Expected an OpenCode scan reader");
+      const sources = yield* openCodeUsageReader
+        .scan({
+          instances: instances.map(({ id, environment, configured }) => ({
+            instanceId: ProviderInstanceId.make(id),
+            config: undefined,
+            environment,
+            configured,
+          })),
+          settings: DEFAULT_SERVER_SETTINGS,
+          windowStartMs: 0,
+          retentionCutoffMs: 0,
+          awaitRefresh: true,
+        })
+        .pipe(
+          Effect.provideService(HostProcess.Environment, {}),
+          Effect.provideService(HostProcess.HomeDirectory, home),
+        );
+      assert.deepStrictEqual(
+        sources.map((source) => source.dir).sort(),
+        [defaultRoot, instanceRoot, xdgRoot].sort(),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});

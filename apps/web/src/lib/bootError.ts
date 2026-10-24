@@ -1,4 +1,5 @@
 import { APP_BASE_NAME } from "~/branding";
+
 /** Shows startup failures before React can replace the boot splash. */
 export function showBootError(error: unknown) {
   console.error(`${APP_BASE_NAME} failed to start.`, error);

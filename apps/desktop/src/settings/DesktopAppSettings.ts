@@ -47,12 +47,7 @@ export interface DesktopSettings {
   // value are migrated to `wslBackendEnabled: true` on load.
   readonly wslBackendEnabled: boolean;
   readonly wslDistro: string | null;
-  // When true (and wslBackendEnabled is also true) the desktop runs only
-  // the WSL backend as the primary, and the Windows-side Node backend is
-  // not started. Designed for users who develop entirely inside WSL and
-  // don't want a second backend process running. Defaults to false so
-  // existing setups stay on the parallel-backends behavior. Changing
-  // this requires a desktop restart because the pool's primary spec is
+  // Changing this requires a desktop restart because the pool's primary spec is
   // chosen once at layer init.
   readonly wslOnly: boolean;
 }
@@ -225,9 +220,6 @@ export function normalizeMainWindowBounds(value: unknown): DesktopWindowBounds |
 function normalizeDesktopSettingsDocument(parsed: DesktopSettingsDocument): DesktopSettings {
   const mainWindowBounds = normalizeMainWindowBounds(parsed.mainWindowBounds);
 
-  // Newer form wins when both are present; otherwise fall back to the legacy
-  // `wslMode === "wsl"` signal so users coming off the swap-mode build keep
-  // their WSL backend enabled.
   const wslBackendEnabled =
     parsed.wslBackendEnabled === true ||
     (parsed.wslBackendEnabled === undefined && parsed.wslMode === "wsl");
@@ -513,6 +505,7 @@ const writeSettings = Effect.fn("desktop.settings.writeSettings")(function* (inp
   );
 });
 
+/** @public */
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -536,7 +529,7 @@ export const make = Effect.gen(function* () {
         return Effect.succeed([settingsChange(settings, false), settings] as const);
       }
 
-      return crypto.randomUUIDv4.pipe(
+      return crypto.randomUUIDv4().pipe(
         Effect.map((uuid) => uuid.replace(/-/g, "")),
         Effect.mapError(
           (cause) =>
