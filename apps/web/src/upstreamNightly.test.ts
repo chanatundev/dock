@@ -10,7 +10,7 @@ const releases = [
 ];
 
 describe("resolveNewerUpstreamNightly", () => {
-  it("offers the newest nightly when CKcode was merged from an older one", () => {
+  it("offers the newest nightly when dock was merged from an older one", () => {
     expect(resolveNewerUpstreamNightly(releases, "0.0.46-nightly.20261003.2638")).toBe(
       "0.0.46-nightly.20261004.2644",
     );
@@ -19,7 +19,7 @@ describe("resolveNewerUpstreamNightly", () => {
     );
   });
 
-  it("offers nothing once CKcode is on the newest nightly", () => {
+  it("offers nothing once dock is on the newest nightly", () => {
     expect(resolveNewerUpstreamNightly(releases, "0.0.46-nightly.20261004.2644")).toBeNull();
   });
 

@@ -2,7 +2,7 @@ import { newestCliReleaseVersion } from "@t3tools/shared/cliRelease";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as Schema from "effect/Schema";
 
-// CKcode is merged from upstream T3 Code nightly tags and carries the merged
+// dock is merged from upstream T3 Code nightly tags and carries the merged
 // tag's version, so a newer upstream nightly means a sync is available.
 const UPSTREAM_REPOSITORY_URL = "https://github.com/pingdotgg/t3code";
 // Nightlies ship several times a day, so the first 20 releases always hold one.

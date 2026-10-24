@@ -28,7 +28,7 @@ const environmentLayer = DesktopEnvironment.layer({
 );
 
 describe("DesktopAssets", () => {
-  it.effect("uses CKcode source-tree icons for unpackaged development", () =>
+  it.effect("uses dock source-tree icons for unpackaged development", () =>
     Effect.gen(function* () {
       const developmentEnvironmentLayer = DesktopEnvironment.layer({
         dirname: "/repo/apps/desktop/dist-electron",
@@ -63,14 +63,8 @@ describe("DesktopAssets", () => {
 
       const icons = yield* assets.iconPaths;
 
-      assert.match(
-        Option.getOrThrow(icons.ico),
-        /apps\/desktop\/resources\/branding\/ckcode\.ico$/,
-      );
-      assert.match(
-        Option.getOrThrow(icons.png),
-        /apps\/desktop\/resources\/branding\/ckcode\.png$/,
-      );
+      assert.match(Option.getOrThrow(icons.ico), /apps\/desktop\/resources\/branding\/dock\.ico$/);
+      assert.match(Option.getOrThrow(icons.png), /apps\/desktop\/resources\/branding\/dock\.png$/);
       assert.isTrue(Option.isNone(icons.icns));
     }),
   );

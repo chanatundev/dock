@@ -28,7 +28,7 @@ function useNewerUpstreamNightly(): string | null {
 }
 
 /**
- * CKcode's stand-in for the desktop update pill. CKcode publishes no update
+ * dock's stand-in for the desktop update pill. dock publishes no update
  * feed; it is rebuilt after merging upstream nightlies, so this only points
  * at the upstream nightly that a sync would bring in.
  */
@@ -36,7 +36,7 @@ export function SidebarUpstreamNightlyPill() {
   const version = useNewerUpstreamNightly();
   if (!version) return null;
 
-  const tooltip = `T3 Code nightly ${version} is available. Run update-ckcode-from-t3code to merge it.`;
+  const tooltip = `T3 Code nightly ${version} is available. Run update-dock-from-t3code to merge it.`;
   const releaseUrl = upstreamNightlyReleaseUrl(version);
 
   return (

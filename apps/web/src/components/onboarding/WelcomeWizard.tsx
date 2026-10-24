@@ -237,10 +237,10 @@ export function WelcomeWizard({
           title={`Set up ${APP_BASE_NAME}`}
           identity={
             <div className="flex items-baseline gap-1.5" role="img" aria-label={APP_BASE_NAME}>
-              {APP_BASE_NAME === "CKcode" ? (
+              {APP_BASE_NAME === "dock" ? (
                 <>
                   <DesktopBrandMark className="size-7" />
-                  <span className="text-2xl font-medium tracking-tight">CKcode</span>
+                  <span className="text-2xl font-medium tracking-tight">dock</span>
                 </>
               ) : (
                 <>

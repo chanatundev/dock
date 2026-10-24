@@ -1,6 +1,6 @@
 /**
  * Browser import service - lists importable sources and writes their cookies
- * into a CKcode browser profile's Electron partition.
+ * into a dock browser profile's Electron partition.
  *
  * @module BrowserImport
  */
