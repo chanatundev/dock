@@ -60,8 +60,8 @@ button:focus-visible { outline: 2px solid #007aff; outline-offset: -2px; }
 img { width: 32px; height: 32px; pointer-events: none; }
 </style></head><body><main id="panel">
 <button id="close" aria-label="Close permission helper">×</button>
-<header>↑ Drag CKcode into the list above</header>
-<button id="app" draggable="true" aria-label="Drag CKcode to System Settings, or click to reveal in Finder"><img src="${escapeHtml(icon)}" alt="" draggable="false">CKcode</button>
+<header>↑ Drag dock into the list above</header>
+<button id="app" draggable="true" aria-label="Drag dock to System Settings, or click to reveal in Finder"><img src="${escapeHtml(icon)}" alt="" draggable="false">dock</button>
 </main></body></html>`;
 }
 
@@ -95,7 +95,7 @@ export class MacPermissionHelper {
     const appIcon = iconPaths
       .map((iconPath) => Electron.nativeImage.createFromPath(iconPath))
       .find((image) => !image.isEmpty());
-    if (!appIcon) throw new Error("The packaged CKcode icon is missing.");
+    if (!appIcon) throw new Error("The packaged dock icon is missing.");
     const icon = appIcon.resize({ width: 64, height: 64 });
     const window = new Electron.BrowserWindow({
       width: 560,

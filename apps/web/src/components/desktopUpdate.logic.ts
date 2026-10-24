@@ -4,8 +4,8 @@ import { APP_BASE_NAME, appBrandCopy } from "~/branding";
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
 
 const DESKTOP_RELEASE_HISTORY_URL =
-  APP_BASE_NAME === "CKcode"
-    ? "https://github.com/chanatundev/ckcode/releases"
+  APP_BASE_NAME === "dock"
+    ? "https://github.com/chanatundev/dock/releases"
     : "https://github.com/pingdotgg/t3code/releases";
 const DESKTOP_RELEASE_TAG_URL = `${DESKTOP_RELEASE_HISTORY_URL}/tag`;
 

@@ -114,7 +114,7 @@ function createWindow(
     resizable: false,
     show: false,
     skipTaskbar: true,
-    title: "CKcode Snapshot Animation",
+    title: "dock Snapshot Animation",
     transparent: true,
     webPreferences: {
       backgroundThrottling: false,

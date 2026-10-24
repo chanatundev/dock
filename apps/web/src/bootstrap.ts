@@ -1,16 +1,18 @@
 import { showBootError } from "./lib/bootError";
-import ckcodeIconUrl from "../../desktop/resources/branding/ckcode-renderer.png";
+import dockIconUrl from "../../desktop/resources/branding/dock-renderer.png";
 
 const desktopBranding = window.desktopBridge?.getAppBranding?.();
-if (desktopBranding?.baseName === "CKcode") {
+if (desktopBranding?.baseName === "dock") {
   document.title = desktopBranding.displayName;
   const bootLogo = document.getElementById("boot-shell-logo");
   if (bootLogo instanceof HTMLImageElement) {
-    bootLogo.src = ckcodeIconUrl;
-    bootLogo.alt = "CKcode";
+    bootLogo.src = dockIconUrl;
+    bootLogo.alt = "dock";
   }
-  document.getElementById("boot-shell-card")?.setAttribute("aria-label", "CKcode splash screen");
-  document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.setAttribute("href", ckcodeIconUrl);
+  document.getElementById("boot-shell-card")?.setAttribute("aria-label", "dock splash screen");
+  document
+    .querySelectorAll<HTMLLinkElement>('link[rel="icon"], link[rel="apple-touch-icon"]')
+    .forEach((link) => link.setAttribute("href", dockIconUrl));
 }
 
 // Bundled dev can move UI code into shared chunks. Load it only after this
