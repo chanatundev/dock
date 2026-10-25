@@ -2794,10 +2794,8 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
   return `${trimmed.slice(0, versionSeparator)}/${trimmed.slice(versionSeparator + 1)}`;
 }
 
-export function resolveDesktopProductName(version: string): string {
-  return resolveDesktopUpdateChannel(version) === "nightly"
-    ? "dock (Nightly)"
-    : (desktopPackageJson.productName ?? "dock");
+export function resolveDesktopProductName(_version?: string): string {
+  return desktopPackageJson.productName ?? "dock";
 }
 
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (

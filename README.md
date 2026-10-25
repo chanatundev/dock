@@ -2,7 +2,7 @@
 
 **dock is a fork of [T3 Code](https://github.com/pingdotgg/t3code).** Credit and thanks go to the [T3 Code contributors](https://github.com/pingdotgg/t3code/graphs/contributors) for creating and maintaining the original project.
 
-dock follows upstream T3 Code's nightly releases while keeping the additions below. Each sync merges the newest upstream nightly and adopts its version (for example `0.0.46-nightly.20261004.2648`). The desktop app is branded dock (Nightly); desktop SSH environments use the matching upstream `t3` release. See the [upstream README](https://github.com/pingdotgg/t3code#readme) for the original project's shared setup and features.
+dock follows upstream T3 Code's nightly releases while keeping the additions below. Each sync merges the newest upstream nightly and adopts its version (for example `0.0.46-nightly.20261004.2648`). The desktop app is branded dock; desktop SSH environments use the matching upstream `t3` release. See the [upstream README](https://github.com/pingdotgg/t3code#readme) for the original project's shared setup and features.
 
 ## What dock adds
 
