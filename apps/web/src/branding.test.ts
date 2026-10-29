@@ -40,7 +40,13 @@ describe("branding", () => {
     expect(branding.appBrandCopy("Keep T3 Code open.")).toBe("Keep dock open.");
   });
 
-  it("normalizes hosted app channel metadata", async () => {
+  it("uses dock branding when opened without an Electron bridge", async () => {
+    const branding = await import("./branding");
+    expect(branding.APP_BASE_NAME).toBe("dock");
+    expect(branding.appBrandCopy("Keep T3 Code open.")).toBe("Keep dock open.");
+  });
+
+  it("keeps nightly channel metadata without a visible dock suffix", async () => {
     vi.stubEnv("VITE_HOSTED_APP_CHANNEL", "nightly");
 
     const branding = await import("./branding");
@@ -48,7 +54,7 @@ describe("branding", () => {
     expect(branding.HOSTED_APP_CHANNEL).toBe("nightly");
     expect(branding.HOSTED_APP_CHANNEL_LABEL).toBe("Nightly");
     expect(branding.APP_STAGE_LABEL).toBe("Nightly");
-    expect(branding.APP_DISPLAY_NAME).toBe("T3 Code (Nightly)");
+    expect(branding.APP_DISPLAY_NAME).toBe("dock");
   });
 
   it("does not label the latest hosted app channel", async () => {
@@ -59,7 +65,7 @@ describe("branding", () => {
     expect(branding.HOSTED_APP_CHANNEL).toBe("latest");
     expect(branding.HOSTED_APP_CHANNEL_LABEL).toBe("Latest");
     expect(branding.APP_STAGE_LABEL).toBe("Latest");
-    expect(branding.APP_DISPLAY_NAME).toBe("T3 Code");
+    expect(branding.APP_DISPLAY_NAME).toBe("dock");
   });
 
   it("ignores unknown hosted app channels", async () => {

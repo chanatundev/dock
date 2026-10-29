@@ -63,6 +63,8 @@ import {
   PaletteIcon,
   RotateCcwIcon,
   SettingsIcon,
+  NetworkIcon,
+  CalendarClockIcon,
   SquarePenIcon,
   TextSearchIcon,
 } from "lucide-react";
@@ -206,6 +208,7 @@ import {
   sourceControlHostIcon,
 } from "./CommandPaletteAddProject";
 import { useCommandPaletteThreadItems } from "./CommandPaletteThreadItems";
+import { useCommandPaletteSpaceItems } from "./CommandPaletteSpaces";
 import {
   APPEARANCE_OPTIONS,
   notifyThemeSaveFailure,
@@ -1185,7 +1188,53 @@ function OpenCommandPaletteDialog(props: {
     if (firstOption) startNewProject(firstOption.environmentId, null);
   };
 
-  const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
+  const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [
+    ...useCommandPaletteSpaceItems(),
+    {
+      kind: "action",
+      value: "dock:hubs",
+      title: "Open Hubs",
+      description: "Browse project groups and unassigned projects",
+      searchTerms: ["hubs", "projects", "groups", "void"],
+      icon: <NetworkIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({ to: "/hubs" });
+      },
+    },
+    {
+      kind: "action",
+      value: "dock:automations",
+      title: "Open Automations",
+      description: "Schedules, run history, and attention",
+      searchTerms: ["automations", "schedules", "webhook"],
+      icon: <CalendarClockIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({ to: "/automations" });
+      },
+    },
+    {
+      kind: "action",
+      value: "dock:inbox",
+      title: "Open Inbox",
+      description: "Attention, Tasks, and your day",
+      searchTerms: ["inbox", "attention", "recap"],
+      icon: <span className={ITEM_ICON_CLASS}>▣</span>,
+      run: async () => {
+        await navigate({ to: "/inbox" });
+      },
+    },
+    {
+      kind: "action",
+      value: "dock:tasks",
+      title: "Open Tasks",
+      description: "Tasks list, board, and agent assignments",
+      searchTerms: ["tasks", "kanban", "board"],
+      icon: <span className={ITEM_ICON_CLASS}>✓</span>,
+      run: async () => {
+        await navigate({ to: "/tasks", search: { archived: false } });
+      },
+    },
+  ];
 
   if (projects.length > 0) {
     const activeProjectTitle =

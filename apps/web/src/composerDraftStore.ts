@@ -4078,8 +4078,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 ),
               ],
             };
-            // Same clearing shape as clearComposerPromptAndImages, but the
-            // preview URLs are NOT revoked: the images moved and their blobs
+            // The preview URLs are NOT revoked: the images moved and their blobs
             // are still referenced from the destination.
             const nextSource: ComposerThreadDraftState = {
               ...source,

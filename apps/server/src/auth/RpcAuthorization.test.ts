@@ -1,11 +1,13 @@
 import {
   AuthEnvironmentMaintainScope,
+  CommandId,
   AuthDiagnosticsReadScope,
   AuthFilesystemReadScope,
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
   ProviderInstanceId,
+  SpaceId,
   ThreadId,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -29,6 +31,16 @@ import {
 import * as RpcAuthorization from "./RpcAuthorization.ts";
 
 describe("RPC authorization scopes", () => {
+  it("requires operate permission to open a side chat or queue reviewed text to its parent", () => {
+    expect(requiredScopeForRpcMethod("sidechat.open")).toBe(AuthOrchestrationOperateScope);
+    expect(requiredScopeForRpcMethod("sidechat.sendToParent")).toBe(AuthOrchestrationOperateScope);
+  });
+  it("permits a side-chat view lease with the same read grant as its transcript", () => {
+    expect(requiredScopeForRpcMethod("sidechat.view")).toBe(AuthOrchestrationReadScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.sidechatReadContext)).toBe(
+      AuthOrchestrationReadScope,
+    );
+  });
   it("declares exactly one scope for every RPC in the server group", () => {
     expect(new Set(Object.keys(RPC_REQUIRED_SCOPES))).toEqual(new Set(WsRpcGroup.requests.keys()));
   });
@@ -70,6 +82,18 @@ describe("RPC authorization scopes", () => {
         `RPC method ${method} has no declared authorization scope.`,
       );
     }
+  });
+  it("keeps Task reads passive and requires operate permission for durable mutations", () => {
+    for (const method of [
+      WS_METHODS.tasksList,
+      WS_METHODS.tasksGet,
+      WS_METHODS.tasksHistory,
+      WS_METHODS.tasksSubscribe,
+      WS_METHODS.inboxReadRecap,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+    expect(requiredScopeForRpcMethod(WS_METHODS.tasksDispatch)).toBe(AuthOrchestrationOperateScope);
   });
 });
 
@@ -128,6 +152,45 @@ describe("RPC scope middleware", () => {
     }).pipe(Effect.scoped),
   );
 });
+
+it.effect("lets read-only clients read Spaces while refusing changes before dispatch", () =>
+  Effect.gen(function* () {
+    const tested = [WS_METHODS.spacesList, WS_METHODS.spacesDispatch] as const;
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
+          !(tested as ReadonlyArray<string>).includes(tag),
+      ),
+    );
+    let changes = 0;
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.spacesList, () =>
+            Effect.succeed({ sequence: 0, spaces: [], projectAssignments: [] }),
+          ),
+          group.toLayerHandler(WS_METHODS.spacesDispatch, () =>
+            Effect.sync(() => ({ sequence: ++changes })),
+          ),
+          RpcAuthorization.layer([AuthOrchestrationReadScope]),
+        ),
+      ),
+    );
+    expect(yield* client[WS_METHODS.spacesList]({})).toEqual({
+      sequence: 0,
+      spaces: [],
+      projectAssignments: [],
+    });
+    expect(
+      yield* client[WS_METHODS.spacesDispatch]({
+        type: "space.delete",
+        commandId: CommandId.make("delete-work"),
+        spaceId: SpaceId.make("work"),
+      }).pipe(Effect.flip),
+    ).toMatchObject({ requiredPermission: AuthOrchestrationOperateScope });
+    expect(changes).toBe(0);
+  }).pipe(Effect.scoped),
+);
 
 describe("settings mutation authorization", () => {
   const group = WsRpcGroup.omit(

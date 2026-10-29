@@ -3,21 +3,25 @@ import {
   AuthTerminalOperateScope,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import * as Option from "effect/Option";
+import { AsyncResult } from "effect/reactivity";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { terminalEnvironment } from "../state/terminal";
 import { agentControlledBrowserCloseConfirmation } from "../components/ChatView.logic";
 import { closePreviewSession } from "../components/preview/closePreviewSession";
 import { useThreadTerminalActions } from "../components/terminal/useThreadTerminalActions";
-import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
+import { confirmTerminalClose, terminalCloseLabels } from "../lib/terminalCloseConfirm";
 import { readLocalApi } from "../localApi";
-import { setActivePreviewTab, useThreadPreviewState } from "../previewStateStore";
+import { readThreadPreviewState, setActivePreviewTab } from "../previewStateStore";
 import {
+  resolveRightPanelSurfaceTarget,
   selectActiveRightPanelSurface,
   selectThreadRightPanelState,
   useRightPanelStore,
   type RightPanelSurface,
 } from "../rightPanelStore";
 import { previewEnvironment } from "../state/preview";
-import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
+import { readEnvironmentScope } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useStableCallback } from "./useStableCallback";
@@ -33,11 +37,6 @@ export function useRightPanelSurfaceClose(input: {
 }) {
   const { threadRef, terminalLabelsById } = input;
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
-  const canOperatePreview = useEnvironmentScope(
-    threadRef?.environmentId ?? null,
-    AuthPreviewOperateScope,
-  );
-  const previewState = useThreadPreviewState(threadRef);
   const terminalActions = useThreadTerminalActions(threadRef);
   const storeCloseTerminal = useTerminalUiStateStore((state) => state.closeTerminal);
   const surfaces = useRightPanelStore(
@@ -48,10 +47,14 @@ export function useRightPanelSurfaceClose(input: {
     // Without preview access only the local surface goes away. The
     // server record is in-memory bookkeeping, not a live view, and stays
     // listed until a client with the scope closes it or the server restarts.
-    if (canOperatePreview && surface.kind === "preview" && surface.resourceId) {
+    if (
+      readEnvironmentScope(ref.environmentId, AuthPreviewOperateScope) &&
+      surface.kind === "preview" &&
+      surface.resourceId
+    ) {
       void closePreviewSession({
         closePreview,
-        snapshot: previewState.sessions[surface.resourceId] ?? null,
+        snapshot: readThreadPreviewState(ref).sessions[surface.resourceId] ?? null,
         tabId: surface.resourceId,
         threadRef: ref,
       });
@@ -62,7 +65,7 @@ export function useRightPanelSurfaceClose(input: {
     ) {
       for (const terminalId of surface.terminalIds) {
         storeCloseTerminal(ref, terminalId);
-        terminalActions.closeTerminalSession(terminalId);
+        terminalActions.closeTerminalSession(terminalId, ref);
       }
     }
   };
@@ -70,7 +73,24 @@ export function useRightPanelSurfaceClose(input: {
     toClose: readonly RightPanelSurface[],
     closeSurfaces: () => void,
   ) => {
-    const message = agentControlledBrowserCloseConfirmation(toClose, previewState.desktopByTabId);
+    if (!threadRef) return;
+    const message = toClose
+      .flatMap((surface) => {
+        const target = resolveRightPanelSurfaceTarget(
+          threadRef,
+          surface,
+          useRightPanelStore.getState().byThreadKey,
+        );
+        const warning =
+          target.surface === null
+            ? null
+            : agentControlledBrowserCloseConfirmation(
+                [target.surface],
+                readThreadPreviewState(target.threadRef).desktopByTabId,
+              );
+        return warning ? [warning] : [];
+      })
+      .join("\n\n");
     if (!message) {
       closeSurfaces();
       return;
@@ -93,7 +113,12 @@ export function useRightPanelSurfaceClose(input: {
       (left, right) => Number(left.id === activeId) - Number(right.id === activeId),
     );
     for (const surface of ordered) {
-      releaseSurfaceResources(threadRef, surface);
+      const target = resolveRightPanelSurfaceTarget(threadRef, surface, store.byThreadKey);
+      if (target.surface !== null) {
+        releaseSurfaceResources(target.threadRef, target.surface);
+        if (surface.kind === "sidechat-tool")
+          store.closeSurface(target.threadRef, target.surface.id);
+      }
       store.closeSurface(threadRef, surface.id);
     }
     const nextActiveSurface = selectActiveRightPanelSurface(
@@ -104,8 +129,6 @@ export function useRightPanelSurfaceClose(input: {
       setActivePreviewTab(threadRef, nextActiveSurface.resourceId);
     }
   };
-  const labelFor = (terminalId: string) =>
-    terminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId);
   const closeSurfaces = (toClose: readonly RightPanelSurface[]) => {
     if (!threadRef) return;
     closeAfterAgentBrowserConfirmation(toClose, () => finishClose(toClose));
@@ -113,25 +136,45 @@ export function useRightPanelSurfaceClose(input: {
 
   const closeSurface = useStableCallback((surface: RightPanelSurface) => {
     if (!threadRef) return;
-    if (surface.kind === "preview") {
+    const target = resolveRightPanelSurfaceTarget(
+      threadRef,
+      surface,
+      useRightPanelStore.getState().byThreadKey,
+    );
+    const resource = target.surface;
+    if (resource?.kind === "preview") {
       closeSurfaces([surface]);
       return;
     }
     if (
-      surface.kind !== "terminal" ||
-      !readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope)
+      resource?.kind !== "terminal" ||
+      !readEnvironmentScope(target.threadRef.environmentId, AuthTerminalOperateScope)
     ) {
       finishClose([surface]);
       return;
     }
-    const otherLabels = surface.terminalIds
-      .filter((terminalId) => terminalId !== surface.activeTerminalId)
-      .map(labelFor);
-    void confirmTerminalClose([labelFor(surface.activeTerminalId), ...otherLabels]).then(
-      (confirmed) => {
-        if (confirmed) finishClose([surface]);
-      },
+    const summaries = Option.getOrNull(
+      AsyncResult.value(
+        appAtomRegistry.get(
+          terminalEnvironment.metadata({
+            environmentId: target.threadRef.environmentId,
+            input: null,
+          }),
+        ),
+      ),
     );
+    const labels = terminalCloseLabels({
+      owner: threadRef,
+      target: target.threadRef,
+      activeTerminalId: resource.activeTerminalId,
+      terminalIds: resource.terminalIds,
+      ownerLabels: terminalLabelsById,
+      metadata:
+        summaries === null ? null : { environmentId: target.threadRef.environmentId, summaries },
+    });
+    void confirmTerminalClose(labels).then((confirmed) => {
+      if (confirmed) finishClose([surface]);
+    });
   });
   const closeOtherSurfaces = useStableCallback((surface: RightPanelSurface) =>
     closeSurfaces(surfaces.filter((entry) => entry.id !== surface.id)),

@@ -23,6 +23,7 @@ export type ChatShortcutCommands = Partial<Record<KeybindingCommand, ChatShortcu
 
 export interface ChatShortcutsInput {
   readonly enabled: boolean;
+  readonly acceptsEventTarget?: ((target: EventTarget | null) => boolean) | undefined;
   readonly keybindings: ResolvedKeybindingsConfig;
   readonly scriptKeybindings: ResolvedKeybindingsConfig;
   readonly getShortcutContext: (target: EventTarget | null) => ShortcutMatchContext & {
@@ -45,6 +46,7 @@ export interface ChatShortcutsInput {
  */
 export function useChatShortcuts(input: ChatShortcutsInput) {
   const handleShortcut = useEffectEvent((event: KeyboardEvent) => {
+    if (input.acceptsEventTarget?.(event.target) === false) return;
     const { keybindings } = input;
     if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
       event.stopPropagation();
@@ -84,6 +86,7 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     event.stopPropagation();
   });
   const dismissFind = useEffectEvent((event: KeyboardEvent) => {
+    if (input.acceptsEventTarget?.(event.target) === false) return;
     if (
       event.key !== "Escape" ||
       !input.threadFindActive ||

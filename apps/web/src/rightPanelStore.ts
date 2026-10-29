@@ -34,9 +34,23 @@ export interface DeviceTabTarget {
 }
 
 export type RightPanelSurface =
+  | {
+      id: `sidechat-tool:${string}`;
+      kind: "sidechat-tool";
+      environmentId: EnvironmentId;
+      threadId: ThreadId;
+      surfaceId: string;
+      toolKind: RightPanelKind;
+    }
   | { id: `browser:${string}`; kind: "preview"; resourceId: string }
   | { id: "browser:new"; kind: "preview"; resourceId: null }
   | { id: "device" | `device:${string}`; kind: "device"; target?: DeviceTabTarget; title?: string }
+  | {
+      id: `sidechat:${string}`;
+      kind: "sidechat";
+      environmentId: EnvironmentId;
+      threadId: ThreadId;
+    }
   | {
       id: `terminal:${string}`;
       kind: "terminal";
@@ -83,7 +97,7 @@ export type RightPanelSurface =
   | { id: "pull-requests"; kind: "pull-requests" };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
-const RIGHT_PANEL_STORAGE_VERSION = 14;
+const RIGHT_PANEL_STORAGE_VERSION = 16;
 
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
   EnvironmentId.make("pull-requests-panel"),
@@ -130,6 +144,12 @@ interface RightPanelStoreState {
   open: (
     ref: ScopedThreadRef,
     kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+  ) => void;
+  openSidechat: (hostRef: ScopedThreadRef, childRef: ScopedThreadRef) => void;
+  openSidechatTool: (
+    hostRef: ScopedThreadRef,
+    childRef: ScopedThreadRef,
+    surface: RightPanelSurface,
   ) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
@@ -234,6 +254,81 @@ const browserSurface = (tabId: string | null): RightPanelSurface =>
   tabId
     ? { id: `browser:${tabId}`, kind: "preview", resourceId: tabId }
     : { id: "browser:new", kind: "preview", resourceId: null };
+
+const sidechatSurface = (
+  childRef: ScopedThreadRef,
+): Extract<RightPanelSurface, { kind: "sidechat" }> => {
+  const id = `sidechat:${JSON.stringify([childRef.environmentId, childRef.threadId])}` as const;
+  return {
+    id,
+    kind: "sidechat",
+    environmentId: childRef.environmentId,
+    threadId: childRef.threadId,
+  };
+};
+
+function restoreSidechatSurface(
+  value: unknown,
+): Extract<RightPanelSurface, { kind: "sidechat" }> | null {
+  if (!value || typeof value !== "object") return null;
+  const persisted = value as Record<string, unknown>;
+  if (
+    persisted.kind !== "sidechat" ||
+    typeof persisted.environmentId !== "string" ||
+    typeof persisted.threadId !== "string"
+  ) {
+    return null;
+  }
+  const environmentId = persisted.environmentId.trim();
+  const threadId = persisted.threadId.trim();
+  if (!environmentId || !threadId) return null;
+  const surface = sidechatSurface({
+    environmentId: EnvironmentId.make(environmentId),
+    threadId: ThreadId.make(threadId),
+  });
+  return persisted.id === surface.id ? surface : null;
+}
+
+const sidechatToolSurface = (
+  childRef: ScopedThreadRef,
+  surfaceId: string,
+  toolKind: RightPanelKind,
+): Extract<RightPanelSurface, { kind: "sidechat-tool" }> => ({
+  id: `sidechat-tool:${JSON.stringify([childRef.environmentId, childRef.threadId, surfaceId])}`,
+  kind: "sidechat-tool",
+  environmentId: childRef.environmentId,
+  threadId: childRef.threadId,
+  surfaceId,
+  toolKind,
+});
+
+function restoreSidechatToolSurface(
+  value: unknown,
+): Extract<RightPanelSurface, { kind: "sidechat-tool" }> | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  if (
+    typeof raw.environmentId !== "string" ||
+    !raw.environmentId.trim() ||
+    typeof raw.threadId !== "string" ||
+    !raw.threadId.trim() ||
+    typeof raw.surfaceId !== "string" ||
+    !raw.surfaceId.trim() ||
+    raw.surfaceId.length > 8192 ||
+    typeof raw.toolKind !== "string" ||
+    !(RIGHT_PANEL_KINDS as readonly string[]).includes(raw.toolKind)
+  )
+    return null;
+  const restored = sidechatToolSurface(
+    scopeThreadRef(
+      EnvironmentId.make(raw.environmentId.trim()),
+      ThreadId.make(raw.threadId.trim()),
+    ),
+    raw.surfaceId,
+    raw.toolKind as RightPanelKind,
+  );
+  return raw.id === restored.id ? restored : null;
+}
 
 const fileSurface = (
   relativePath: string,
@@ -463,8 +558,17 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                 threadState && typeof threadState === "object" ? threadState : null;
               const surfaces = Array.isArray(validThreadState?.surfaces)
                 ? validThreadState.surfaces.flatMap<RightPanelSurface>((surface) => {
+                    if (!surface || typeof surface !== "object") return [];
                     const kind = (surface as { kind?: string }).kind;
                     if (kind === "plan" || kind === "agents") return [];
+                    if (kind === "sidechat-tool") {
+                      const restored = restoreSidechatToolSurface(surface);
+                      return restored ? [restored] : [];
+                    }
+                    if (kind === "sidechat") {
+                      const restored = restoreSidechatSurface(surface);
+                      return restored ? [restored] : [];
+                    }
                     if (
                       (surface.kind === "file" || surface.kind === "files") &&
                       "folderTrail" in surface &&
@@ -662,6 +766,20 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             return upsertSurface(current, singletonSurface(kind));
           }),
         ),
+      openSidechat: (hostRef, childRef) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(hostRef), (current) =>
+            upsertSurface(current, sidechatSurface(childRef)),
+          ),
+        ),
+      openSidechatTool: (hostRef, childRef, surface) => {
+        if (surface.kind === "sidechat" || surface.kind === "sidechat-tool") return;
+        set((state) =>
+          userAction(state, scopedThreadKey(hostRef), (current) =>
+            upsertSurface(current, sidechatToolSurface(childRef, surface.id, surface.kind)),
+          ),
+        );
+      },
       openDevice: (ref, target, automatic = false) =>
         set((state) =>
           (automatic ? automaticUpdate : userAction)(state, scopedThreadKey(ref), (current) => {
@@ -1131,6 +1249,10 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         ),
       }),
       migrate: migratePersistedRightPanelState,
+      merge: (persisted, current) => ({
+        ...current,
+        ...migratePersistedRightPanelState(persisted),
+      }),
     },
   ),
 );
@@ -1152,6 +1274,7 @@ useRightPanelStore.subscribe((next, previous) => {
     ];
     for (const surface of closedInOrder) {
       if (
+        surface.kind === "sidechat-tool" ||
         surface.kind === "terminal" ||
         (surface.kind === "preview" && surface.resourceId !== null)
       )
@@ -1186,13 +1309,35 @@ export function selectThreadPanelOpen(
   return presentation === "inline" ? visibility.inlineOpen : visibility.popoverOpen;
 }
 
+export function resolveRightPanelSurfaceTarget(
+  owner: ScopedThreadRef,
+  surface: RightPanelSurface,
+  byThreadKey: Record<string, ThreadRightPanelState>,
+) {
+  if (surface.kind !== "sidechat-tool") return { threadRef: owner, surface };
+  const threadRef = scopeThreadRef(surface.environmentId, surface.threadId);
+  const original = byThreadKey[scopedThreadKey(threadRef)]?.surfaces.find(
+    (entry) => entry.id === surface.surfaceId,
+  );
+  return {
+    threadRef,
+    surface:
+      original?.kind === "sidechat" || original?.kind === "sidechat-tool"
+        ? null
+        : (original ?? null),
+  };
+}
+
 export function selectActiveRightPanel(
   byThreadKey: Record<string, ThreadRightPanelState>,
   ref: ScopedThreadRef | null | undefined,
 ): RightPanelKind | null {
   const state = selectThreadRightPanelState(byThreadKey, ref);
   if (!state.isOpen) return null;
-  return state.surfaces.find((surface) => surface.id === state.activeSurfaceId)?.kind ?? null;
+  const activeSurface = state.surfaces.find((surface) => surface.id === state.activeSurfaceId);
+  return activeSurface?.kind === "sidechat" || activeSurface?.kind === "sidechat-tool"
+    ? null
+    : (activeSurface?.kind ?? null);
 }
 
 export function selectActiveRightPanelSurface(

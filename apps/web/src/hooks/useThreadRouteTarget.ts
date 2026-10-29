@@ -1,4 +1,6 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { useContext } from "react";
+import { ThreadRouteScope } from "../threadRouteScope";
 import { useParams } from "@tanstack/react-router";
 
 import {
@@ -13,13 +15,19 @@ import {
 function useThreadRouteIds() {
   const environmentId = useParams({ strict: false, select: (params) => params.environmentId });
   const threadId = useParams({ strict: false, select: (params) => params.threadId });
-  return { environmentId, threadId };
+  const embedded = useContext(ThreadRouteScope);
+  return embedded ?? { environmentId, threadId };
 }
 
 export function useThreadRouteTarget(): ThreadRouteTarget | null {
   const { environmentId, threadId } = useThreadRouteIds();
   const draftId = useParams({ strict: false, select: (params) => params.draftId });
-  return resolveThreadRouteTarget({ environmentId, threadId, draftId });
+  const embedded = useContext(ThreadRouteScope);
+  return resolveThreadRouteTarget({
+    environmentId,
+    threadId,
+    draftId: embedded ? undefined : draftId,
+  });
 }
 
 export function useThreadRouteRef(): ScopedThreadRef | null {

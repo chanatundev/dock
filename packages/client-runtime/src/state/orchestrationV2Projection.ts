@@ -220,6 +220,7 @@ export function applyOrchestrationV2ProjectionEvent(
   const partialTimeline = options?.partialTimeline === true;
   const latestLocalTurnOrdinal = options?.latestLocalTurnOrdinal;
   const base = { ...projection, updatedAt: event.occurredAt };
+  if (event.type === "sidechat.context-captured") return base;
   switch (event.type) {
     case "thread.pull-request-link-updated":
       return {

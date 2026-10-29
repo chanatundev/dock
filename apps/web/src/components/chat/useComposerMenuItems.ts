@@ -55,6 +55,7 @@ export function useComposerMenuItems({
   pullRequestRepository,
   threadPullRequests,
   planModeUiEnabled,
+  sidechatAvailable = false,
   compactSlashCommandAvailable,
   selectedProvider,
   selectedProviderSkills,
@@ -69,6 +70,7 @@ export function useComposerMenuItems({
   readonly pullRequestRepository: string | null;
   readonly threadPullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
   readonly planModeUiEnabled: boolean;
+  readonly sidechatAvailable?: boolean;
   readonly compactSlashCommandAvailable: boolean;
   readonly selectedProvider: ProviderDriverKind;
   readonly selectedProviderSkills: ServerProvider["skills"];
@@ -177,6 +179,17 @@ export function useComposerMenuItems({
     }
     if (composerTrigger.kind === "slash-command") {
       const builtInSlashCommandItems = [
+        ...(sidechatAvailable
+          ? ([
+              {
+                id: "slash:side",
+                type: "slash-command",
+                command: "side",
+                label: "/side",
+                description: "Open a focused side chat with a frozen snapshot",
+              },
+            ] as const)
+          : []),
         {
           id: "slash:model",
           type: "slash-command",

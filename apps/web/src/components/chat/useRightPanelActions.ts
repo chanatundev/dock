@@ -33,6 +33,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import type { ChatShortcutCommands } from "./useChatShortcuts";
 interface RightPanelActionsInput {
   readonly activeThreadRef: ScopedThreadRef | null;
+  readonly acceptsGlobalAction?: () => boolean;
   readonly activeProject: EnvironmentProject | null;
   readonly activeRightPanelSurface: RightPanelSurface | null;
   readonly activePreviewState: ThreadPreviewState;
@@ -90,6 +91,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     onDiffPanelOpen,
   } = input;
 
+  const acceptsGlobalAction = useStableCallback(() => input.acceptsGlobalAction?.() ?? true);
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const onToggleDiff = () => {
     if (!isServerThread) {
@@ -288,9 +290,9 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   useEffect(
     () =>
       subscribePreviewAction((action) => {
-        if (action === "toggle-panel") togglePreviewPanelStable();
+        if (action === "toggle-panel" && acceptsGlobalAction()) togglePreviewPanelStable();
       }),
-    [togglePreviewPanelStable],
+    [togglePreviewPanelStable, acceptsGlobalAction],
   );
 
   const shortcuts = {

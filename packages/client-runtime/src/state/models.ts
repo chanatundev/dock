@@ -1,5 +1,9 @@
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
+import {
+  sidechatThreadMetadata,
+  type ThreadSidechatMetadata,
+} from "@t3tools/shared/sidechatThread";
 import type {
   ThreadLinkedPullRequest,
   EnvironmentId,
@@ -134,7 +138,7 @@ function threadRunStatusIsActive(status: ThreadRuntimeSummary["status"]): boolea
   );
 }
 
-export interface EnvironmentThreadShell {
+export interface EnvironmentThreadShell extends ThreadSidechatMetadata {
   readonly environmentId: EnvironmentId;
   readonly id: ThreadId;
   readonly projectId: ProjectId;
@@ -277,6 +281,7 @@ export function presentThreadShell(
     runtime?.status === "running";
   return {
     environmentId,
+    ...sidechatThreadMetadata(thread),
     id: thread.id,
     projectId: thread.projectId,
     title:

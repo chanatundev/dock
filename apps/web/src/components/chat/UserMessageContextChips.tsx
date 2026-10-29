@@ -21,6 +21,7 @@ import {
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown from "../ChatMarkdown";
 import { ThreadContextChip } from "../ThreadContextChip";
+import { GitHubIssueContextChip } from "../GitHubIssueContextChip";
 import { MessageCircleIcon, MousePointerClickIcon, PaintbrushIcon } from "lucide-react";
 import type { ComposerContextId, KnownComposerContextRecord } from "@t3tools/contracts";
 import { buildExpandedImagePreview } from "./ExpandedImagePreview";
@@ -295,6 +296,16 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
 >({
   requiredKinds: COMPOSER_CONTEXT_KINDS,
   handlers: [
+    {
+      kind: "github-issue",
+      canRender: (record) => record.kind === "github-issue",
+      render: (record, context) =>
+        record.kind === "github-issue" ? (
+          <GitHubIssueContextChip record={record} copyMarkdown={context.copyMarkdown} />
+        ) : (
+          <UnavailableUserMessageContextChip {...context} />
+        ),
+    },
     {
       kind: "mention",
       canRender: (record) => record.kind === "mention",

@@ -87,6 +87,7 @@ import {
 import { getDesktopSnapShotBridge } from "../lib/desktopSnapShot";
 import { installDesktopPasteAsText } from "../lib/desktopPasteAsText";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
+import { shouldBootstrapDockThread } from "../dockTabs.logic";
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
@@ -508,13 +509,13 @@ function EventRouter({
   readonly skipInitialBootstrapNavigation: boolean;
 }) {
   const navigate = useNavigate();
-  const pathname = useLocation({ select: (loc) => loc.pathname });
+  const location = useLocation();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const primaryEnvironment = usePrimaryEnvironment();
   const serverConfig = useAtomValue(primaryServerConfigAtom);
   const serverConfigEvent = useAtomValue(primaryServerConfigEventAtom);
   const serverWelcome = useAtomValue(primaryServerWelcomeAtom);
-  const readPathname = useEffectEvent(() => pathname);
+  const shouldOpenBootstrapThread = useEffectEvent(() => shouldBootstrapDockThread(location));
   const handledBootstrapThreadIdRef = useRef<string | null>(null);
   const skipInitialBootstrapNavigationRef = useRef(skipInitialBootstrapNavigation);
   const handledConfigEventRef = useRef(serverConfigEvent);
@@ -545,7 +546,7 @@ function EventRouter({
         );
       useUiStateStore.getState().setProjectExpanded(bootstrapProjectKey, true);
 
-      if (readPathname() !== "/") {
+      if (!shouldOpenBootstrapThread()) {
         return;
       }
       if (skipInitialBootstrapNavigationRef.current) {

@@ -2474,3 +2474,8 @@ code {
     }
   }
 }
+
+.dock-top-tabs-content-area [data-slot="sidebar-inset"] {
+  height: 100%;
+  min-height: 0;
+}

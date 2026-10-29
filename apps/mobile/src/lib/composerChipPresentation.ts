@@ -28,6 +28,7 @@ const CONTEXT_CHIP_PRESENTATIONS = {
     icon: "mouse-pointer-click",
   },
   "review-comment": { accent: "#8a70dd", icon: "message-circle" },
+  "github-issue": { accent: "#009f6e", icon: "message-circle" },
   "pull-request": {
     accent: "#7079e4",
     icon: "git-pull-request-arrow",

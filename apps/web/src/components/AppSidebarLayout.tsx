@@ -40,6 +40,13 @@ import {
 import LegacyThreadSidebar from "./LegacySidebar";
 import { useThreadVisitedMigration } from "../hooks/useThreadVisitedMigration";
 import ThreadSidebar from "./Sidebar";
+import {
+  DockFeatureRail,
+  DockSheetFeatureNavigation,
+  DOCK_FEATURE_RAIL_WIDTH,
+} from "./DockFeatureRail";
+import { DockTopTabs } from "./DockTopTabs";
+import { DockSpaceRouteCoordinator } from "./DockSpaceRouteCoordinator";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { SidebarBrandWidthProbe, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { MainAppLocationTracker } from "./sidebar/mainAppLocation";
@@ -132,6 +139,7 @@ function SidebarControl() {
   const { toggleSidebar, isMobile, mobileSheetMounted } = useSidebar();
   const isSidebarVisible = useSidebarVisibility();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
+  const toggleIsOverRail = !isMobile && !(isElectron && isMacPlatform(navigator.platform));
   const stageBackdropVariant = useSidebarStageBackdropVariant(
     environmentIdentificationMode === "artwork",
   );
@@ -190,7 +198,11 @@ function SidebarControl() {
         <TooltipTrigger
           render={
             <SidebarTrigger
-              variant={isSidebarVisible && stageBackdropVariant ? "media-navigation" : "ghost"}
+              variant={
+                !toggleIsOverRail && isSidebarVisible && stageBackdropVariant
+                  ? "media-navigation"
+                  : "ghost"
+              }
               className={cn(
                 "pointer-events-auto",
                 isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
@@ -342,6 +354,11 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const panelAnimationsSuppressed = usePanelNavigationSuppression(pathname);
   const routePanelAnimationsActive = panelAnimationsActive && !panelAnimationsSuppressed;
   const isOnSettings = pathname === "/settings" || pathname.startsWith("/settings/");
+  const isAuthOrWelcome =
+    pathname === "/welcome" ||
+    pathname === "/pair" ||
+    pathname === "/connect" ||
+    pathname === "/connect-agent";
   const isMacosDesktop = isElectron && isMacPlatform(navigator.platform);
   const [sidebarWidth, setSidebarWidth] = useState(readInitialThreadSidebarWidth);
   // Subscribed rather than read once: the clamp must track live window size,
@@ -350,7 +367,10 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const viewportWidth = useSyncExternalStore(subscribeToViewportWidth, readViewportWidth);
   const [brandWidth, setBrandWidth] = useState(0);
   const sidebarMinimumWidth = resolveThreadSidebarMinimumWidth(brandWidth);
-  const sidebarMaximumWidth = resolveThreadSidebarMaximumWidth(viewportWidth, sidebarMinimumWidth);
+  const sidebarMaximumWidth = resolveThreadSidebarMaximumWidth(
+    viewportWidth - (isAuthOrWelcome || viewportWidth < 768 ? 0 : DOCK_FEATURE_RAIL_WIDTH),
+    sidebarMinimumWidth,
+  );
   const resetSidebarWidth = () => {
     try {
       removeLocalStorageItem(THREAD_SIDEBAR_WIDTH_STORAGE_KEY);
@@ -371,6 +391,8 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const sidebarProviderStyle = {
     "--sidebar-width": `${clampThreadSidebarWidth(sidebarWidth, sidebarMinimumWidth, sidebarMaximumWidth)}px`,
     "--panel-animation-duration": `${panelAnimationDurationMs}ms`,
+    "--sidebar-left-offset":
+      isAuthOrWelcome || viewportWidth < 768 ? "0px" : `${DOCK_FEATURE_RAIL_WIDTH}px`,
     ...windowControlsInsetStyle,
   } as CSSProperties;
 
@@ -404,6 +426,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       >
         <SidebarBrandWidthProbe onWidthChange={setBrandWidth} />
         <ProjectProjectionRetention />
+        {isAuthOrWelcome ? null : <DockFeatureRail />}
         <Sidebar
           side="left"
           collapsible="offcanvas"
@@ -415,7 +438,10 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
             minWidth: sidebarMinimumWidth,
             shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
               nextWidth <= currentWidth ||
-              wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
+              wrapper.clientWidth -
+                nextWidth -
+                (viewportWidth >= 768 && !isAuthOrWelcome ? DOCK_FEATURE_RAIL_WIDTH : 0) >=
+                THREAD_MAIN_CONTENT_MIN_WIDTH,
             storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
             onResize: setSidebarWidth,
           }}
@@ -431,13 +457,29 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           ) : (
             <ThreadSidebar routeReveal={sidebarRouteReveal} />
           )}
+          {isAuthOrWelcome ? null : <DockSheetFeatureNavigation />}
           <SidebarRail onDoubleClick={resetSidebarWidth} />
         </Sidebar>
-        {children}
+        {isAuthOrWelcome ? (
+          children
+        ) : (
+          <div className="dock-top-tabs-content-area flex min-w-0 flex-1 flex-col h-dvh min-h-0 overflow-hidden [--dock-fixed-titlebar-offset:0px] [&:has([data-dock-top-tabs])]:[--dock-fixed-titlebar-offset:var(--workspace-topbar-height)]">
+            <DockTopTabs />
+            <div
+              id="dock-active-view"
+              role="tabpanel"
+              aria-label="Active view"
+              className="relative flex min-w-0 flex-1 flex-col min-h-0 overflow-hidden [--workspace-controls-right:calc(env(safe-area-inset-right)+0.75rem)] [--workspace-native-controls-inset:0px] [--workspace-titlebar-content-left:var(--workspace-gutter-start)]"
+            >
+              {children}
+            </div>
+          </div>
+        )}
         <SidebarControl />
         <NavigationHistoryShortcuts />
         {isOnSettings ? null : <ThreadUndoShortcut />}
         <MainAppLocationTracker />
+        {isAuthOrWelcome ? null : <DockSpaceRouteCoordinator />}
       </SidebarProvider>
     </PanelAnimationSuppressionProvider>
   );

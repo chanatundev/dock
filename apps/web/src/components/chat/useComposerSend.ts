@@ -16,7 +16,10 @@ import {
   makeThreadErrorSetter,
 } from "../ChatView.logic";
 import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
-import { isStandaloneComposerSidekickCommand } from "../../composer-logic";
+import {
+  parseComposerSidechatCommand,
+  isStandaloneComposerSidekickCommand,
+} from "../../composer-logic";
 import { isDesktopSidekickAvailable, toggleDesktopSidekick } from "../../lib/desktopSidekick";
 import {
   AuthOrchestrationOperateScope,
@@ -162,6 +165,7 @@ type UsageLimitsPanel = ReturnType<typeof useUsageLimitsPanel>;
 type TimelineFollow = ReturnType<typeof useTimelineFollow>;
 
 interface ComposerSendInput {
+  readonly onSidechatCommand?: ((question: string) => void) | undefined;
   readonly environmentId: EnvironmentId;
   readonly routeThreadKey: string;
   readonly currentRouteThreadKeyRef: { readonly current: string | null };
@@ -252,6 +256,7 @@ interface ComposerSendInput {
  */
 export function useComposerSend(input: ComposerSendInput) {
   const {
+    onSidechatCommand,
     environmentId,
     routeThreadKey,
     currentRouteThreadKeyRef,
@@ -398,6 +403,18 @@ export function useComposerSend(input: ComposerSendInput) {
     // What the user pressed send on; uploads below can take a while, and a redirect must not
     // decline approvals for a draft that changed meanwhile.
     const promptAtSend = promptRef.current;
+    const sideQuestion = parseComposerSidechatCommand(promptAtSend);
+    if (!directAnnotation && sideQuestion !== null) {
+      if (draftHasNonPromptContent(composerDraftTarget) || !onSidechatCommand) {
+        toastManager.add({
+          type: "info",
+          title: "Open a side chat first",
+          description:
+            "Use a saved thread to open the side chat, then add any attachments there. Your draft is preserved.",
+        });
+      } else onSidechatCommand(sideQuestion);
+      return;
+    }
     if (
       usageLimitsOffered &&
       usageLimitsKey !== null &&

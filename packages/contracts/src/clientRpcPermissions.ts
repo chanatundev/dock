@@ -13,6 +13,11 @@ import { WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  [ORCHESTRATION_V2_WS_METHODS.launchThread]: AuthOrchestrationOperateScope,
+  [WS_METHODS.sidechatOpen]: AuthOrchestrationOperateScope,
+  [WS_METHODS.sidechatSendToParent]: AuthOrchestrationOperateScope,
+  [WS_METHODS.spacesDispatch]: AuthOrchestrationOperateScope,
+  [WS_METHODS.tasksDispatch]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewClose]: AuthPreviewOperateScope,
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
   [WS_METHODS.serverCheckOtlpEndpoint]: AuthSettingsWriteScope,

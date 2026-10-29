@@ -345,6 +345,7 @@ export function layerWithRegistry<Error>(
   );
   const layerContextHandoffServiceProvided = ContextHandoffService.layer.pipe(
     Layer.provide(IdAllocator.layer),
+    Layer.provide(layerStores),
   );
   const layerPersistence = Layer.mergeAll(
     layerStores,

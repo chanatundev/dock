@@ -2,11 +2,19 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   AuthSessionId,
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+  CommandId,
   EnvironmentId,
   ProjectId,
+  SpaceId,
+  DockTaskId,
   ThreadId,
   WS_METHODS,
   WsSubscribeServerConfigRpc,
+  WsRpcGroup,
+  type SpacesStreamItem,
+  type TaskSummariesStreamItem,
   type OrchestrationV2StoredEvent,
   type OrchestrationProjectShell,
   type ServerConfig,
@@ -20,6 +28,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { Headers } from "effect/http";
 import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
+import * as RpcTest from "effect/rpc/RpcTest";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
@@ -67,6 +76,10 @@ import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolve
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
+import * as Spaces from "./spaces/SpaceService.ts";
+import * as Tasks from "./tasks/TaskService.ts";
+import * as InboxRecap from "./inbox/InboxRecapService.ts";
+import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -99,6 +112,8 @@ import * as EventStore from "./orchestration-v2/EventStore.ts";
 import * as ProjectionMaintenance from "./orchestration-v2/ProjectionMaintenance.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
+import * as SidechatContextService from "./orchestration-v2/SidechatContextService.ts";
+import * as SidechatService from "./orchestration-v2/SidechatService.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as OrchestrationEventStore from "./persistence/OrchestrationEventStore.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
@@ -292,6 +307,14 @@ it.live.each(["thread", "shell"] as const)(
 
 // Build the production RPC layer; unrelated capabilities fail if this test calls them.
 const layerUnusedConfigRpcServices = Layer.mergeAll(
+  Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+  Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+  Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+  Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+  Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+  Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+  Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+  Layer.mock(UsageLimitSources.UsageLimitSources)({}),
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),
   Layer.mock(WorkspacePaths.WorkspacePaths)({}),
   Layer.mock(TraceDiagnostics.TraceDiagnostics)({}),
@@ -338,6 +361,9 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ResourceTelemetry.ResourceTelemetry)({}),
   Layer.mock(ReviewService.ReviewService)({}),
   Layer.mock(ScheduledTasks.ScheduledTaskService)({}),
+  Layer.mock(Spaces.SpaceService)({}),
+  Layer.mock(Tasks.TaskService)({}),
+  Layer.mock(InboxRecap.InboxRecapService)({}),
   Layer.mock(SecretRequests.SecretRequests)({}),
   Layer.mock(ServerLifecycleEvents.ServerLifecycleEvents)({}),
   Layer.mock(ServerRuntimeStartup.ServerRuntimeStartup)({}),
@@ -350,6 +376,8 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(TerminalManager.TerminalManager)({}),
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
   Layer.mock(ThreadManagement.ThreadManagementService)({}),
+  Layer.mock(SidechatContextService.SidechatContextService)({}),
+  Layer.mock(SidechatService.SidechatService)({}),
   Layer.mock(ThreadSearch.ThreadSearch)({}),
   Layer.mock(UsageService.UsageService)({}),
   Layer.mock(VcsProvisioningService.VcsProvisioningService)({}),
@@ -370,6 +398,187 @@ const layerConfigSources = Layer.mergeAll(
     ),
   ),
   Layer.provideMerge(NodeServices.layer),
+);
+
+it.effect("persists Task metadata through production RPCs and streams compact summaries", () =>
+  Effect.gen(function* () {
+    const tasks = yield* Tasks.TaskService;
+    const tested = [
+      WS_METHODS.tasksList,
+      WS_METHODS.tasksGet,
+      WS_METHODS.tasksHistory,
+      WS_METHODS.tasksSubscribe,
+      WS_METHODS.tasksDispatch,
+    ] as const;
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RpcAuthorization.RPC_REQUIRED_SCOPES,
+          (typeof tested)[number]
+        > => !(tested as ReadonlyArray<string>).includes(tag),
+      ),
+    );
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerWsRpc(
+            {
+              sessionId: AuthSessionId.make("task-test"),
+              subject: "task-test",
+              method: "browser-session-cookie",
+              scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+            },
+            {},
+            {},
+            yield* PreviewAutomationBroker.PreviewAutomationBroker,
+            yield* ServerBrowser.ServerBrowser,
+          ).pipe(
+            Layer.provide(
+              Layer.mergeAll(layerUnusedConfigRpcServices, Layer.succeed(Tasks.TaskService, tasks)),
+            ),
+          ),
+          RpcAuthorization.layer([AuthOrchestrationReadScope, AuthOrchestrationOperateScope]),
+        ),
+      ),
+    );
+    const responses = yield* Queue.unbounded<TaskSummariesStreamItem>();
+    yield* client[WS_METHODS.tasksSubscribe]({}).pipe(
+      Stream.runForEach((item) => Queue.offer(responses, item)),
+      Effect.forkChild,
+    );
+    assert.deepEqual(yield* Queue.take(responses), {
+      kind: "snapshot",
+      snapshot: { sequence: 0, tasks: [] },
+    });
+    const taskId = DockTaskId.make("rpc-task");
+    yield* client[WS_METHODS.tasksDispatch]({
+      command: {
+        type: "task.create",
+        commandId: CommandId.make("task-create"),
+        taskId,
+        title: "Investigate layout",
+        notes: "Private detail",
+      },
+      creationSource: "mobile",
+    });
+    const created = yield* Queue.take(responses);
+    assert.equal(created.kind, "event");
+    if (created.kind === "event" && created.event.change.type === "task.updated") {
+      assert.equal(created.event.change.task.title, "Investigate layout");
+      assert.equal("notes" in created.event.change.task, false);
+    }
+    const snapshot = yield* client[WS_METHODS.tasksList]({});
+    assert.equal(snapshot.tasks[0]?.title, "Investigate layout");
+    assert.equal(JSON.stringify(snapshot).includes("Private detail"), false);
+    const detail = yield* client[WS_METHODS.tasksGet]({ taskId });
+    assert.equal(detail.notes, "Private detail");
+    const history = yield* client[WS_METHODS.tasksHistory]({ taskId, limit: 1 });
+    assert.equal(history.events.length, 1);
+    assert.equal(history.events[0]?.creationSource, "mobile");
+    assert.equal(history.nextBeforeSequence, null);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Tasks.layer,
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+      ).pipe(Layer.provideMerge(layerConfigSources)),
+    ),
+    Effect.scoped,
+  ),
+);
+
+it.effect(
+  "creates and deletes Spaces through the production RPC handlers and committed stream",
+  () =>
+    Effect.gen(function* () {
+      const spaces = yield* Spaces.SpaceService;
+      const tested = [
+        WS_METHODS.spacesList,
+        WS_METHODS.spacesSubscribe,
+        WS_METHODS.spacesDispatch,
+      ] as const;
+      const group = WsRpcGroup.omit(
+        ...[...WsRpcGroup.requests.keys()].filter(
+          (
+            tag,
+          ): tag is Exclude<
+            keyof typeof RpcAuthorization.RPC_REQUIRED_SCOPES,
+            (typeof tested)[number]
+          > => !(tested as ReadonlyArray<string>).includes(tag),
+        ),
+      );
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerWsRpc(
+              {
+                sessionId: AuthSessionId.make("space-test"),
+                subject: "space-test",
+                method: "browser-session-cookie",
+                scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+              },
+              {},
+              {},
+              yield* PreviewAutomationBroker.PreviewAutomationBroker,
+              yield* ServerBrowser.ServerBrowser,
+            ).pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  layerUnusedConfigRpcServices,
+                  Layer.succeed(Spaces.SpaceService, spaces),
+                ),
+              ),
+            ),
+            RpcAuthorization.layer([AuthOrchestrationReadScope, AuthOrchestrationOperateScope]),
+          ),
+        ),
+      );
+      const responses = yield* Queue.unbounded<SpacesStreamItem>();
+      yield* client[WS_METHODS.spacesSubscribe]({}).pipe(
+        Stream.runForEach((item) => Queue.offer(responses, item)),
+        Effect.forkChild,
+      );
+      assert.deepEqual(yield* Queue.take(responses), {
+        kind: "snapshot",
+        snapshot: { sequence: 0, spaces: [], projectAssignments: [] },
+      });
+      const spaceId = SpaceId.make("rpc-work");
+      const created = yield* client[WS_METHODS.spacesDispatch]({
+        type: "space.create",
+        commandId: CommandId.make("rpc-create"),
+        spaceId,
+        name: "Work",
+        icon: "bag",
+      });
+      const creation = yield* Queue.take(responses);
+      assert.equal(creation.kind, "event");
+      if (creation.kind === "event") {
+        assert.equal(creation.event.sequence, created.sequence);
+        assert.equal(creation.event.change.type, "space.created");
+      }
+      assert.equal((yield* client[WS_METHODS.spacesList]({})).spaces[0]?.id, spaceId);
+      const deleted = yield* client[WS_METHODS.spacesDispatch]({
+        type: "space.delete",
+        commandId: CommandId.make("rpc-delete"),
+        spaceId,
+      });
+      const deletion = yield* Queue.take(responses);
+      assert.equal(deletion.kind, "event");
+      if (deletion.kind === "event") assert.equal(deletion.event.sequence, deleted.sequence);
+      assert.deepEqual((yield* client[WS_METHODS.spacesList]({})).spaces, []);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Spaces.layer.pipe(Layer.provideMerge(ProjectStore.layer)),
+          Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+          Layer.mock(ServerBrowser.ServerBrowser)({}),
+        ).pipe(Layer.provideMerge(layerConfigSources)),
+      ),
+      Effect.scoped,
+    ),
 );
 
 it.effect(

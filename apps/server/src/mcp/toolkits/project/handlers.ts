@@ -1,4 +1,10 @@
-import { MessageId, ThreadId, OrchestratorMcpFailure, ProjectId } from "@t3tools/contracts";
+import {
+  MessageId,
+  ThreadId,
+  OrchestratorMcpFailure,
+  ProjectId,
+  SpaceId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -10,6 +16,7 @@ import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.t
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
+import * as Spaces from "../../../spaces/SpaceService.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveRuntimeMode } from "../../OrchestratorMcpService.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -54,6 +61,36 @@ const access = Effect.gen(function* () {
   return yield* Project.ProjectService;
 });
 export const layer = McpToolAccess.toLayer(ProjectToolkit, {
+  t3_space_list: McpToolAccess.reads(() =>
+    Spaces.SpaceService.pipe(
+      Effect.flatMap((spaces) => spaces.list),
+      Effect.mapError(
+        (error) =>
+          new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
+      ),
+    ),
+  ),
+  t3_space_mutate: McpToolAccess.writesEnvironment((input) =>
+    Effect.gen(function* () {
+      const spaces = yield* Spaces.SpaceService;
+      const commandId = input.command.commandId ?? (yield* newCommandId());
+      const command =
+        input.command.type === "space.create"
+          ? {
+              ...input.command,
+              commandId,
+              spaceId: input.command.spaceId ?? SpaceId.make(commandId),
+            }
+          : { ...input.command, commandId };
+      const result = yield* spaces.dispatch(command);
+      return command.type === "space.create" ? { ...result, spaceId: command.spaceId } : result;
+    }).pipe(
+      Effect.mapError(
+        (error) =>
+          new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
+      ),
+    ),
+  ),
   t3_thread_launch: McpToolAccess.startsThreads(
     (input) => input,
     (input, { runtimeMode, interactionMode }) =>

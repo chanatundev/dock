@@ -1,4 +1,7 @@
 import { CollapsibleSectionHeader } from "./ui/collapsible-section-header";
+import { DockSpacesSwitcher } from "./DockSpacesSwitcher";
+import { useDockSpaceProjectView } from "../state/spaces";
+import { combineDockProjectScopes } from "../dockSpaces.logic";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
@@ -50,10 +53,8 @@ import {
 
 import { ExternalLinkIcon, FolderIcon, ListFilterIcon, PlusIcon, SettingsIcon } from "lucide-react";
 import {
-  useCallback,
   useEffect,
   useLayoutEffect,
-  useMemo,
   useReducer,
   useRef,
   useState,
@@ -678,10 +679,12 @@ function isOptimisticDropReleased(input: {
 // unmutated; built inside a hook they reach it frozen and cached.
 function useSidebarLookups() {
   const projects = useProjects();
+  const { projectKeys: spaceProjectKeys, emptyMessage: spaceEmptyMessage } =
+    useDockSpaceProjectView(projects);
   const environments = useEnvironmentIdentities();
   const serverConfigs = useServerConfigs();
   const providerEntriesByEnvironment = useAtomValue(sidebarProviderEntriesAtom);
-  const projectGroups = useSidebarProjectGroups();
+  const projectGroups = useSidebarProjectGroups({ filterBySpace: true });
   const environmentLabelById = new Map(
     environments.map((environment) => [environment.environmentId, environment.label] as const),
   );
@@ -704,6 +707,8 @@ function useSidebarLookups() {
   ];
   return {
     projects,
+    spaceProjectKeys,
+    spaceEmptyMessage,
     serverConfigs,
     projectGroups,
     environmentLabelById,
@@ -753,6 +758,8 @@ const SIDEBAR_DRAG_LABEL_HEIGHT = 24;
 export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReveal }) {
   const {
     projects,
+    spaceProjectKeys,
+    spaceEmptyMessage,
     serverConfigs,
     projectGroups,
     environmentLabelById,
@@ -947,14 +954,22 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     projectScopeKey === null
       ? null
       : (projectGroups.find((project) => project.projectKey === projectScopeKey) ?? null);
-  const scopedProjectKeys =
+  const scopedProjectKeys = combineDockProjectScopes(
+    spaceProjectKeys,
     scopedProjectGroup === null
       ? null
       : new Set(
           scopedProjectGroup.memberProjectRefs.map(
             (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
           ),
-        );
+        ),
+  );
+  const projectSelectionScope =
+    scopedProjectKeys === null ? "all" : JSON.stringify([...scopedProjectKeys].sort());
+  useEffect(() => {
+    if (projectSelectionScope === "all") return;
+    clearSelection();
+  }, [clearSelection, projectSelectionScope]);
   useEffect(() => {
     const nextKey = resolveSidebarProjectScopeKey({
       groups: projectGroups,
@@ -996,14 +1011,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     return count;
   });
   const draftThreadsByThreadKey = useComposerDraftStore((store) => store.draftThreadsByThreadKey);
-  const openDraftProjectKeys = useMemo(
-    () =>
-      new Set(
-        Object.values(draftThreadsByThreadKey)
-          .filter((session) => session.promotedTo == null)
-          .map((session) => `${session.environmentId}:${session.projectId}`),
-      ),
-    [draftThreadsByThreadKey],
+  const openDraftProjectKeys = new Set(
+    Object.values(draftThreadsByThreadKey)
+      .filter((session) => session.promotedTo == null)
+      .map((session) => `${session.environmentId}:${session.projectId}`),
   );
 
   const openProjectSettings = useStableCallback(
@@ -1116,9 +1127,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     threads,
     projectScopeKey,
     isSearchingThreads,
+    scopedProjectKeys,
   ]);
 
-  const projectKeysWithOpenChats = useMemo(() => {
+  const projectKeysWithOpenChats = (() => {
     const keys = new Set(openDraftProjectKeys);
     for (const threadsInSection of [pinnedThreads, activeThreads, snoozedThreads]) {
       for (const thread of threadsInSection) {
@@ -1126,9 +1138,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       }
     }
     return keys;
-  }, [activeThreads, openDraftProjectKeys, pinnedThreads, snoozedThreads]);
+  })();
 
-  const settledProjectGroups = useMemo(() => {
+  const settledProjectGroups = (() => {
     if (isSearchingThreads) return [];
     const query = threadSearchQuery.trim().toLocaleLowerCase();
     return projectGroups.filter((group) => {
@@ -1149,13 +1161,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       }
       return query.length === 0 || group.displayName.toLocaleLowerCase().includes(query);
     });
-  }, [
-    isSearchingThreads,
-    projectGroups,
-    projectKeysWithOpenChats,
-    scopedProjectKeys,
-    threadSearchQuery,
-  ]);
+  })();
   const [settledProjectsShelfExpanded, setSettledProjectsShelfExpanded] = useLocalStorage(
     SETTLED_PROJECTS_SHELF_EXPANDED_KEY,
     false,
@@ -2664,33 +2670,30 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     updateThreadJumpHintsVisibility(shouldShowJumpHintsNow);
   }, [shouldShowJumpHintsNow, updateThreadJumpHintsVisibility]);
 
-  const openSettledProject = useCallback(
-    (projectGroup: SidebarProjectSnapshot) => {
-      const project =
-        projectGroup.memberProjects.find(
-          (member) =>
-            member.environmentId === projectGroup.environmentId && member.id === projectGroup.id,
-        ) ?? projectGroup.memberProjects[0];
-      if (!project) return;
-      if (isMobile) setOpenMobile(false);
-      void (async () => {
-        const result = await settlePromise(() =>
-          newThreadContext.handleNewThread(scopeProjectRef(project.environmentId, project.id)),
+  const openSettledProject = useStableCallback((projectGroup: SidebarProjectSnapshot) => {
+    const project =
+      projectGroup.memberProjects.find(
+        (member) =>
+          member.environmentId === projectGroup.environmentId && member.id === projectGroup.id,
+      ) ?? projectGroup.memberProjects[0];
+    if (!project) return;
+    if (isMobile) setOpenMobile(false);
+    void (async () => {
+      const result = await settlePromise(() =>
+        newThreadContext.handleNewThread(scopeProjectRef(project.environmentId, project.id)),
+      );
+      if (result._tag === "Failure") {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not open project",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
         );
-        if (result._tag === "Failure") {
-          const error = squashAtomCommandFailure(result);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not open project",
-              description: error instanceof Error ? error.message : "An error occurred.",
-            }),
-          );
-        }
-      })();
-    },
-    [isMobile, newThreadContext.handleNewThread, setOpenMobile],
-  );
+      }
+    })();
+  });
 
   const handleNewThreadClick = (event?: ReactMouseEvent) => {
     if (shouldCreateNewThreadInCurrentProject(event?.shiftKey ?? false, projectGroups.length)) {
@@ -2715,6 +2718,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     <>
       <ThreadContextDragGhost />
       <SidebarChromeHeader isElectron={isElectron} />
+      <DockSpacesSwitcher />
       <SidebarContent
         className="min-h-full"
         fixedHeader={
@@ -3291,7 +3295,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             0 &&
           settledProjectGroups.length === 0 ? (
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
-              {projects.length === 0 ? (
+              {spaceEmptyMessage !== null ? (
+                <span role="status">{spaceEmptyMessage}</span>
+              ) : projects.length === 0 ? (
                 <>
                   <span>No projects yet</span>
                   <button

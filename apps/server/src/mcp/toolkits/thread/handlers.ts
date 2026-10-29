@@ -22,6 +22,8 @@ import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { ThreadToolkit } from "./tools.ts";
+import * as SidechatContextService from "../../../orchestration-v2/SidechatContextService.ts";
+import * as SidechatService from "../../../orchestration-v2/SidechatService.ts";
 
 function queueEntry(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
@@ -80,6 +82,43 @@ const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A,
 ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
 
 export const layer = McpToolAccess.toLayer(ThreadToolkit, {
+  t3_sidechat_open: McpToolAccess.writesThreads(
+    (input) => [input.sourceThreadId],
+    (input) =>
+      Effect.gen(function* () {
+        const { projection } = yield* readThread(input.sourceThreadId, []);
+        const sidechats = yield* SidechatService.SidechatService;
+        return yield* sidechats
+          .open(
+            { ...input, commandId: yield* newCommandId(), sourceThreadId: projection.thread.id },
+            { createdBy: "agent", creationSource: "mcp" },
+          )
+          .pipe(
+            Effect.mapError(
+              (error) =>
+                new OrchestratorMcpFailure({
+                  code: error.reason === "unavailable" ? "orchestration_error" : "invalid_request",
+                  message: error.message,
+                }),
+            ),
+          );
+      }),
+  ),
+  t3_sidechat_context_read: McpToolAccess.reads((input) =>
+    Effect.gen(function* () {
+      const { projection } = yield* readThread(input.threadId, []);
+      const context = yield* SidechatContextService.SidechatContextService;
+      return yield* context.read({ ...input, threadId: projection.thread.id }).pipe(
+        Effect.mapError(
+          (error) =>
+            new OrchestratorMcpFailure({
+              code: error.reason === "unavailable" ? "orchestration_error" : "invalid_request",
+              message: error.message,
+            }),
+        ),
+      );
+    }),
+  ),
   run_scheduled_task_now: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
       const scheduler = yield* ScheduledTasks.ScheduledTaskService;

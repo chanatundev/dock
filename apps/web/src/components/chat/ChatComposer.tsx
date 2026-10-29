@@ -53,7 +53,6 @@ import {
   useEffectEvent,
   useId,
   useImperativeHandle,
-  useCallback,
   useLayoutEffect,
   useRef,
   useState,
@@ -188,14 +187,10 @@ import { rememberCopiedComposerAttachments } from "~/lib/copiedComposerAttachmen
 import { useThreadContextDrop, threadContextDropTargetProps } from "./threadContextDrag";
 import { readThreadShell } from "~/state/entities";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
-import type {
-  ComposerContextClipboardFragment,
-  ComposerContextRecord,
-  ThreadPullRequestLink,
-} from "@t3tools/contracts";
+import type { ComposerContextRecord, ThreadPullRequestLink } from "@t3tools/contracts";
 import { threadContextAttachment } from "~/lib/threadContextAttachment";
 import { PipelinePromptBuilder } from "./PipelinePromptBuilder";
-import { isDesktopSidekickAvailable, toggleDesktopSidekick } from "../../lib/desktopSidekick";
+import { toggleDesktopSidekick } from "../../lib/desktopSidekick";
 import {
   type ComposerCommandItem,
   ComposerCommandMenu,
@@ -415,6 +410,7 @@ export interface ChatComposerProps {
   keepFullHistory: boolean;
   onToggleKeepFullHistory: () => void;
   onUsageLimitsCommand?: (() => void) | undefined;
+  onSidechatCommand?: (() => void) | undefined;
   environmentUnavailable: {
     readonly label: string;
     readonly connection: EnvironmentConnectionPresentation;
@@ -1217,6 +1213,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     pullRequestRepository,
     threadPullRequests,
     planModeUiEnabled,
+    sidechatAvailable: props.onSidechatCommand !== undefined,
     compactSlashCommandAvailable,
     selectedProvider,
     selectedProviderSkills,
@@ -1955,6 +1952,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return;
     }
     if (item.type === "slash-command") {
+      if (item.command === "side") {
+        setComposerHighlightedItemId(null);
+        props.onSidechatCommand?.();
+        return;
+      }
       if (item.command === "pipeline") {
         const remainingPrompt =
           snapshot.value.slice(0, trigger.rangeStart) + snapshot.value.slice(trigger.rangeEnd);
@@ -3447,12 +3449,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       focusComposer={focusComposer}
     />
   ) : null;
-  const setPromptFromTraits = useCallback(
-    (nextPrompt: string) => {
-      editPromptFromTraitsStable(() => nextPrompt);
-    },
-    [editPromptFromTraitsStable],
-  );
+  const setPromptFromTraits = (nextPrompt: string) => {
+    editPromptFromTraitsStable(() => nextPrompt);
+  };
 
   return (
     <>

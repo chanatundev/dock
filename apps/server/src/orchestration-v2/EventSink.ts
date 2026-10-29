@@ -25,7 +25,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
 import type { UnsequencedProjectEvent } from "../persistence/OrchestrationEventStore.ts";
-import { projectDomainEventForWire } from "./WireProjection.ts";
+import { projectDomainEventForWire, isClientVisibleOrchestrationEvent } from "./WireProjection.ts";
 import { makeRunOutcomeRecorder, type RunOutcome } from "./RunMetrics.ts";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -34,6 +34,7 @@ import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import * as SidechatAssets from "./SidechatAssets.ts";
 
 export class EventSinkWriteError extends Schema.TaggedError<EventSinkWriteError>()(
   "EventSinkWriteError",
@@ -228,6 +229,7 @@ const layerBase: Layer.Layer<
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const projectStore = yield* ProjectStore.ProjectStoreV2;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
+    const sidechatAssets = yield* SidechatAssets.SidechatAssets;
     const liveEvents = yield* PubSub.unbounded<OrchestrationV2StoredEvent>();
     const liveEventsByType = new Map<
       OrchestrationV2DomainEvent["type"],
@@ -640,6 +642,33 @@ const layerBase: Layer.Layer<
     const commitCommandEffect = Effect.fn("orchestrationV2.EventSink.commitCommand")(function* (
       input: Parameters<EventSinkV2Shape["commitCommand"]>[0],
     ) {
+      // Replays must not touch a parent that may already have been removed.
+      if (
+        input.events.some((event) => event.type === "sidechat.context-captured") &&
+        Option.isSome(yield* commandReceipts.getByCommandId(input.commandId))
+      ) {
+        const previous = yield* existingCommandResult(input.commandId);
+        return { ...previous, committed: false, cancelledEffectCount: 0 };
+      }
+      const copiedPaths: string[] = [];
+      // Attachment staging precedes the SQL commit, just like pending upload claims.
+      // The canonical event retains only owned references; replay never copies files.
+      const events = yield* Effect.forEach(
+        input.events,
+        (event) =>
+          Effect.gen(function* () {
+            if (event.type !== "sidechat.context-captured" || event.payload.snapshot === undefined)
+              return event;
+            const staged = yield* sidechatAssets.stage({
+              threadId: event.threadId,
+              snapshot: event.payload.snapshot,
+            });
+            copiedPaths.push(...staged.copiedPaths);
+            return { ...event, payload: { ...event.payload, snapshot: staged.snapshot } };
+          }),
+        { concurrency: 1 },
+      ).pipe(Effect.onError(() => sidechatAssets.release(copiedPaths)));
+      let retained = false;
       const result = yield* commitThenPublish(
         Effect.gen(function* () {
           const reserved = yield* commandReceipts.insertIfAbsent({
@@ -656,7 +685,7 @@ const layerBase: Layer.Layer<
             return { ...existing, committed: false as const, cancelledEffectIds: [] };
           }
 
-          const normalized = yield* normalizeEvents(input.events);
+          const normalized = yield* normalizeEvents(events);
           const storedEvents = yield* eventStore.append({
             commandId: input.commandId,
             events: normalized,
@@ -695,12 +724,17 @@ const layerBase: Layer.Layer<
         }),
         (result) =>
           Effect.gen(function* () {
+            retained = result.committed;
+            if (!retained) yield* sidechatAssets.release(copiedPaths);
             yield* effectOutbox.signalCancellations(result.cancelledEffectIds);
             if (result.committed && input.effects.length > 0) {
               yield* effectOutbox.notifyAvailable(input.effects.length);
             }
             if (result.committed) yield* publishStoredEvents(result.storedEvents, result.outcomes);
           }),
+      ).pipe(
+        Effect.onError(() => (retained ? Effect.void : sidechatAssets.release(copiedPaths))),
+        (effect) => (copiedPaths.length > 0 ? Effect.uninterruptible(effect) : effect),
       );
       return {
         receipt: result.receipt,
@@ -861,7 +895,8 @@ const layerBase: Layer.Layer<
               subscribe: PubSub.subscribe(pubsub),
               latestSequence: eventStore.latestSequence(),
               afterSequence,
-              filter: matches,
+              filter: (stored) =>
+                matches(stored) && isClientVisibleOrchestrationEvent(stored.event),
               replay,
               project: (stored) => ({ ...stored, event: projectDomainEventForWire(stored.event) }),
             });

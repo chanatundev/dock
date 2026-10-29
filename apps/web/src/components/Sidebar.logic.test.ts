@@ -7,6 +7,7 @@ import { AsyncResult } from "effect/reactivity";
 import {
   archiveSelectedThreadEntries,
   deleteSelectedThreadEntries,
+  filterSidebarV2VisibleThreads,
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
   resolveSidebarRowThreadId,
@@ -47,6 +48,72 @@ import { makeThreadFixture, type ThreadFixtureOverrides } from "../test-fixtures
 import { completeSidebarRouteReveal, pendingSidebarRouteReveal } from "./sidebar/routeReveal";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("filterSidebarV2VisibleThreads", () => {
+  it("hides live and expired side chats from both shared project trees and keeps ordinary threads", () => {
+    const ordinary = makeThread({ id: ThreadId.make("ordinary") });
+    const live = makeThread({
+      id: ThreadId.make("live-sidechat"),
+      sidechatSourceThreadId: ThreadId.make("source-live"),
+    });
+    const expired = makeThread({
+      id: ThreadId.make("expired-sidechat"),
+      sidechatContext: {
+        kind: "github-issue",
+        sourceEnvironmentId: localEnvironmentId,
+        projectId: ProjectId.make("project-1"),
+        host: "github.com",
+        repository: "org/repo",
+        number: 42,
+        title: "Issue",
+        url: "https://github.com/org/repo/issues/42",
+        updatedAt: "2026-10-24T12:00:00.000Z",
+      },
+      sidechatExpiredAt: "2026-10-24T12:00:00.000Z",
+    });
+
+    expect(filterSidebarV2VisibleThreads([live, ordinary, expired], null)).toEqual([ordinary]);
+  });
+
+  it("includes side chats for Inbox without bypassing project, archive, or subagent filters", () => {
+    const projectId = ProjectId.make("project-1");
+    const ordinary = makeThread({ id: ThreadId.make("ordinary"), projectId });
+    const sidechat = makeThread({
+      id: ThreadId.make("sidechat"),
+      projectId,
+      sidechatSourceThreadId: ThreadId.make("source"),
+    });
+    const outOfScope = makeThread({
+      id: ThreadId.make("out-of-scope"),
+      projectId: ProjectId.make("project-other"),
+      sidechatSourceThreadId: ThreadId.make("source-other"),
+    });
+    const archived = makeThread({
+      id: ThreadId.make("archived"),
+      projectId,
+      archivedAt: "2026-10-24T12:00:00.000Z",
+      sidechatSourceThreadId: ThreadId.make("source-archived"),
+    });
+    const subagent = makeThread({
+      id: ThreadId.make("subagent"),
+      projectId,
+      lineage: {
+        rootThreadId: ThreadId.make("root"),
+        parentThreadId: ThreadId.make("root"),
+        relationshipToParent: "subagent",
+      },
+      sidechatSourceThreadId: ThreadId.make("source-child"),
+    });
+
+    expect(
+      filterSidebarV2VisibleThreads(
+        [ordinary, sidechat, outOfScope, archived, subagent],
+        new Set([`${localEnvironmentId}:${projectId}`]),
+        { includeSidechat: true },
+      ),
+    ).toEqual([ordinary, sidechat]);
+  });
+});
 
 describe("deleteSelectedThreadEntries", () => {
   const entries = [{ threadKey: "one" }, { threadKey: "two" }, { threadKey: "three" }] as const;
@@ -471,7 +538,7 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Plan Ready", pulse: false });
   });
 
-  it("does not manufacture completed state without a client visit marker", () => {
+  it("shows completed before a thread has its first visit", () => {
     expect(
       resolveThreadStatusPill({
         thread: {
@@ -484,7 +551,7 @@ describe("resolveThreadStatusPill", () => {
           },
         },
       }),
-    ).toBeNull();
+    ).toMatchObject({ label: "Completed", pulse: false });
   });
 
   it("shows completed when there is an unseen completion and no active blocker", () => {

@@ -27,6 +27,30 @@ import { MAX_TOOL_OUTPUT_IMAGES, toolOutputImages } from "@t3tools/shared/toolOu
 
 const decodeTurnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem);
 const encodeTurnItemJson = Schema.encodeSync(OrchestrationV2TurnItemJson);
+
+it("keeps a frozen transcript out of streamed capture notices without modifying persisted data", () => {
+  const source = {
+    kind: "thread" as const,
+    threadId: ThreadId.make("parent"),
+    snapshotSequence: 7,
+    capturedAt: "2026-10-26T12:00:00.000Z",
+  };
+  const event = {
+    id: EventId.make("context-capture"),
+    threadId: ThreadId.make("side"),
+    type: "sidechat.context-captured" as const,
+    occurredAt: DateTime.makeUnsafe(source.capturedAt),
+    payload: {
+      source,
+      itemCount: 0,
+      snapshot: { source, items: [], referenceText: "Private frozen source" },
+    },
+  };
+  const projected = projectDomainEventForWire(event);
+  expect(JSON.stringify(projected)).not.toContain("Private frozen source");
+  expect(projected.payload).toEqual({ source, itemCount: 0 });
+  expect(event.payload.snapshot.referenceText).toEqual("Private frozen source");
+});
 const decodeTurnItemJson = Schema.decodeUnknownSync(OrchestrationV2TurnItemJson);
 
 const base = {

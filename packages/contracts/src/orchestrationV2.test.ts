@@ -4,6 +4,11 @@ import * as Schema from "effect/Schema";
 
 import { NodeId, RunAttemptId, TrimmedNonEmptyString } from "./index.ts";
 import {
+  OrchestrationV2AppThreadJson,
+  OrchestrationV2Command,
+  OrchestrationV2StoredEventJson,
+  OrchestrationV2ThreadLaunchInput,
+  OrchestrationV2ThreadShell,
   latestProviderTurnForAttempt,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderThread,
@@ -15,6 +20,7 @@ import {
   OrchestrationV2TurnItem,
   OrchestrationV2TurnItemJson,
 } from "./orchestrationV2.ts";
+import { SidechatSource } from "./sidechat.ts";
 
 const now = DateTime.makeUnsafe("2026-04-20T00:00:00.000Z");
 
@@ -32,6 +38,61 @@ const decodeOrchestrationV2ProviderThread = Schema.decodeUnknownSync(Orchestrati
 const decodeOrchestrationV2ProviderCapabilities = Schema.decodeUnknownSync(
   OrchestrationV2ProviderCapabilities,
 );
+const decodeSidechatSource = Schema.decodeSync(SidechatSource);
+const decodeAppThreadJson = Schema.decodeSync(OrchestrationV2AppThreadJson);
+const encodeAppThreadJson = Schema.encodeSync(OrchestrationV2AppThreadJson);
+const decodeSidechatThreadShellFields = Schema.decodeSync(
+  Schema.Struct({
+    sidechatSourceThreadId: OrchestrationV2ThreadShell.fields.sidechatSourceThreadId,
+    sidechatContext: OrchestrationV2ThreadShell.fields.sidechatContext,
+    sidechatCapturedAt: OrchestrationV2ThreadShell.fields.sidechatCapturedAt,
+    sidechatSnapshotSequence: OrchestrationV2ThreadShell.fields.sidechatSnapshotSequence,
+    sidechatLastActivityAt: OrchestrationV2ThreadShell.fields.sidechatLastActivityAt,
+    sidechatExpiredAt: OrchestrationV2ThreadShell.fields.sidechatExpiredAt,
+  }),
+);
+const decodeStoredEventJson = Schema.decodeSync(OrchestrationV2StoredEventJson);
+const encodeStoredEventJson = Schema.encodeSync(OrchestrationV2StoredEventJson);
+const decodeCommand = Schema.decodeUnknownSync(OrchestrationV2Command);
+const decodeThreadLaunchInput = Schema.decodeUnknownSync(OrchestrationV2ThreadLaunchInput);
+
+const sidechatSource = decodeSidechatSource({
+  kind: "thread",
+  threadId: "thread:source",
+  snapshotSequence: 4,
+  capturedAt: "2026-04-20T00:00:00.000Z",
+});
+const sidechatMetadata = {
+  sidechatSourceThreadId: "thread:source",
+  sidechatContext: null,
+  sidechatCapturedAt: "2026-04-20T00:00:00.000Z",
+  sidechatSnapshotSequence: 4,
+  sidechatLastActivityAt: "2026-04-20T00:00:00.000Z",
+  sidechatExpiredAt: null,
+} as const;
+const appThreadJson = {
+  createdBy: "user",
+  creationSource: "web",
+  id: "thread:sidechat",
+  projectId: "project:execution",
+  title: "Side conversation",
+  providerInstanceId: "codex",
+  modelSelection: { instanceId: "codex", model: "gpt-5-codex" },
+  runtimeMode: "full-access",
+  interactionMode: "default",
+  branch: null,
+  worktreePath: null,
+  activeProviderThreadId: null,
+  lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: "thread:sidechat" },
+  forkedFrom: null,
+  createdAt: "2026-04-20T00:00:00.000Z",
+  updatedAt: "2026-04-20T00:00:00.000Z",
+  archivedAt: null,
+  settledOverride: null,
+  settledAt: null,
+  lastVisitedAt: null,
+  deletedAt: null,
+} as const;
 
 describe("orchestration V2 contracts", () => {
   it("decodes thread event types from a newer server as skippable items", () => {
@@ -569,5 +630,74 @@ describe("latestProviderTurnForAttempt", () => {
     ];
     expect(latestProviderTurnForAttempt(turns, RunAttemptId.make("goal-attempt"))?.id).toBe("last");
     expect(latestProviderTurnForAttempt(turns, null)).toBeUndefined();
+  });
+});
+
+describe("Sidechat orchestration contracts", () => {
+  it("keeps legacy thread JSON decodable and carries optional metadata over the wire", () => {
+    expect(decodeAppThreadJson(appThreadJson)).toMatchObject({ id: "thread:sidechat" });
+    expect(decodeAppThreadJson(appThreadJson)).not.toHaveProperty("sidechatContext");
+
+    const withMetadata = { ...appThreadJson, ...sidechatMetadata };
+    const decoded = decodeAppThreadJson(withMetadata);
+    expect(decoded).toMatchObject(sidechatMetadata);
+    expect(encodeAppThreadJson(decoded)).toEqual(withMetadata);
+  });
+
+  it("keeps sidechat metadata in thread shells and persisted thread.created events", () => {
+    expect(decodeSidechatThreadShellFields(sidechatMetadata)).toEqual(sidechatMetadata);
+
+    const storedEvent = {
+      sequence: 1,
+      commandId: "command:create-sidechat",
+      event: {
+        id: "event:sidechat-created",
+        type: "thread.created",
+        threadId: "thread:sidechat",
+        occurredAt: "2026-04-20T00:00:00.000Z",
+        payload: { ...appThreadJson, ...sidechatMetadata },
+      },
+    } as const;
+    const decoded = decodeStoredEventJson(storedEvent);
+    expect(decoded.event).toMatchObject({ type: "thread.created" });
+    if (decoded.event.type !== "thread.created") throw new Error("Expected thread.created event");
+    expect(decoded.event.payload).toMatchObject(sidechatMetadata);
+    expect(encodeStoredEventJson(decoded)).toEqual(storedEvent);
+  });
+
+  it("preserves source provenance in launch and create inputs without native fork lineage", () => {
+    const sidechat = sidechatSource;
+    const command = decodeCommand({
+      type: "thread.create",
+      createdBy: "user",
+      creationSource: "web",
+      commandId: "command:create-sidechat",
+      threadId: "thread:sidechat",
+      projectId: "project:execution",
+      title: "Side conversation",
+      modelSelection: { instanceId: "codex", model: "gpt-5-codex" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      sidechat,
+    });
+    const launch = decodeThreadLaunchInput({
+      commandId: "command:launch-sidechat",
+      projectId: "project:execution",
+      title: "Side conversation",
+      modelSelection: { instanceId: "codex", model: "gpt-5-codex" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      workspaceStrategy: { type: "root" },
+      sidechat,
+    });
+
+    expect(command).toMatchObject({ type: "thread.create", sidechat });
+    expect(launch.sidechat).toEqual(sidechat);
+    expect(command).not.toHaveProperty("lineage");
+    expect(command).not.toHaveProperty("forkedFrom");
+    expect(launch).not.toHaveProperty("lineage");
+    expect(launch).not.toHaveProperty("forkedFrom");
   });
 });

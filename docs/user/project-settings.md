@@ -1,5 +1,18 @@
 # Settings and project overrides
 
+## Hubs and Void
+
+On web and desktop, use the Hub switcher above the thread sidebar to group projects by purpose.
+Create a Hub on a connected machine, then manage it to add projects. Each project belongs to
+at most one Hub; **Void** contains that machine's ungrouped projects. The command palette can
+also switch Hubs or show all projects.
+
+Hubs belong to their environment, so two machines can have different Hubs with the same name.
+Repository checkout grouping applies within the selected Hub. Deleting a Hub returns its
+projects to Void and preserves their threads and files. Hub selection is saved on this device.
+
+## Settings scope
+
 On web and desktop, the "Applying settings for …" sentence at the top of Settings pages picks
 the project and environment a change applies to. Pages that only hold device preferences, such as
 Appearance, don't show it. They start at **All projects** and **All environments**

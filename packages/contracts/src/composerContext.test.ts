@@ -5,13 +5,46 @@ import * as Schema from "effect/Schema";
 import {
   COMPOSER_CONTEXT_KINDS,
   ComposerContextRecord,
+  GitHubIssueContextSnapshot,
   OrchestrationMessageContext,
 } from "./composerContext.ts";
 
 const decodeRecord = Schema.decodeUnknownOption(ComposerContextRecord);
+const decodeGitHubIssueSnapshot = Schema.decodeUnknownOption(GitHubIssueContextSnapshot);
 const decodeContext = Schema.decodeUnknownSync(OrchestrationMessageContext);
+const encodeContext = Schema.encodeUnknownSync(Schema.toCodecJson(OrchestrationMessageContext));
 
 const base = { version: 1, contextId: "ctx_1" } as const;
+
+const githubIssueRecord = {
+  ...base,
+  kind: "github-issue",
+  label: "#42 Restore sessions",
+  environmentId: "environment-1",
+  projectId: "project-1",
+  host: "github.com",
+  repository: "acme/app",
+  number: 42,
+  url: "https://github.com/acme/app/issues/42",
+  title: "Restore sessions",
+  state: "open",
+  sourceUpdatedAt: "2026-10-26T12:00:00.000Z",
+  capturedAt: "2026-10-26T12:30:00.000Z",
+  body: "Sessions disappear after a restart.",
+  bodyTruncated: false,
+  comments: [
+    {
+      id: "issuecomment-1",
+      author: { login: "alice", name: "Alice", avatarUrl: null },
+      url: "https://github.com/acme/app/issues/42#issuecomment-1",
+      createdAt: "2026-10-26T12:10:00.000Z",
+      body: "I can reproduce this.",
+      bodyTruncated: false,
+    },
+  ],
+  totalComments: 3,
+  omittedComments: 2,
+} as const;
 
 const knownRecords: Record<(typeof COMPOSER_CONTEXT_KINDS)[number], Record<string, unknown>> = {
   image: {
@@ -102,6 +135,7 @@ const knownRecords: Record<(typeof COMPOSER_CONTEXT_KINDS)[number], Record<strin
       isDraft: false,
     },
   },
+  "github-issue": githubIssueRecord,
   mention: { ...base, kind: "mention", label: "@src/index.ts", path: "src/index.ts" },
   skill: { ...base, kind: "skill", label: "$pinchtab", name: "pinchtab" },
   thread: {
@@ -115,6 +149,98 @@ const knownRecords: Record<(typeof COMPOSER_CONTEXT_KINDS)[number], Record<strin
 };
 
 describe("ComposerContextRecord", () => {
+  it("round-trips a GitHub issue snapshot with separate capture and source times", () => {
+    expect(Option.isSome(decodeGitHubIssueSnapshot(githubIssueRecord))).toBe(true);
+    expect(Option.getOrThrow(decodeRecord(githubIssueRecord))).toEqual(githubIssueRecord);
+    const wire = encodeContext({
+      version: 1,
+      records: [githubIssueRecord],
+    });
+    expect(decodeContext(wire).records).toEqual([githubIssueRecord]);
+  });
+
+  it("enforces issue snapshot bounds and consistent comment counts", () => {
+    expect(Option.isSome(decodeRecord({ ...githubIssueRecord, body: "x".repeat(6_000) }))).toBe(
+      true,
+    );
+    expect(Option.isNone(decodeRecord({ ...githubIssueRecord, body: "x".repeat(6_001) }))).toBe(
+      true,
+    );
+    expect(
+      Option.isSome(
+        decodeRecord({
+          ...githubIssueRecord,
+          comments: [{ ...githubIssueRecord.comments[0], body: "x".repeat(1_500) }],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      Option.isNone(
+        decodeRecord({
+          ...githubIssueRecord,
+          comments: [
+            {
+              ...githubIssueRecord.comments[0],
+              body: "x".repeat(1_501),
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      Option.isSome(
+        decodeRecord({
+          ...githubIssueRecord,
+          comments: Array.from({ length: 12 }, (_, index) => ({
+            ...githubIssueRecord.comments[0],
+            id: `issuecomment-${index}`,
+          })),
+          totalComments: 12,
+          omittedComments: 0,
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      Option.isNone(
+        decodeRecord({
+          ...githubIssueRecord,
+          comments: Array.from({ length: 13 }, (_, index) => ({
+            ...githubIssueRecord.comments[0],
+            id: `issuecomment-${index}`,
+          })),
+          totalComments: 13,
+          omittedComments: 0,
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      Option.isNone(decodeRecord({ ...githubIssueRecord, totalComments: 4, omittedComments: 2 })),
+    ).toBe(true);
+    expect(
+      Option.isNone(decodeGitHubIssueSnapshot({ ...githubIssueRecord, totalComments: 4 })),
+    ).toBe(true);
+  });
+
+  it("keeps the new kind guarded while retaining unknown future kinds", () => {
+    expect(Option.isNone(decodeRecord({ ...githubIssueRecord, body: undefined }))).toBe(true);
+    expect(
+      Option.getOrThrow(
+        decodeRecord({
+          ...base,
+          kind: "future-thing",
+          label: "Future",
+          payload: { anything: [1, 2, 3] },
+        }),
+      ),
+    ).toEqual({
+      version: 1,
+      contextId: "ctx_1",
+      kind: "future-thing",
+      label: "Future",
+      payload: { anything: [1, 2, 3] },
+    });
+  });
+
   it("keeps unknown kinds with their payload", () => {
     const decoded = decodeRecord({
       ...base,
@@ -178,7 +304,7 @@ describe("OrchestrationMessageContext", () => {
   });
 
   it("sends a message without the records the wire cannot carry", () => {
-    const wire = Schema.encodeUnknownSync(Schema.toCodecJson(OrchestrationMessageContext))({
+    const wire = encodeContext({
       version: 1,
       records: [
         decodeContext({ version: 1, records: [knownRecords.terminal] }).records[0],

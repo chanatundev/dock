@@ -7,6 +7,10 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import { runMigrations } from "./Migrations.ts";
 import { initializeV2Database } from "./initializeV2Database.ts";
+import { ensureDockSpacesSchema } from "./ensureDockSpacesSchema.ts";
+import { ensureDockTasksSchema } from "./ensureDockTasksSchema.ts";
+import { ensureDockInboxRecapIndexes } from "./ensureDockInboxRecapIndexes.ts";
+import { ensureDockSidechatSnapshotsSchema } from "./ensureDockSidechatSnapshotsSchema.ts";
 import * as ServerConfig from "../config.ts";
 
 const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
@@ -37,6 +41,10 @@ const layerSetup = Layer.effectDiscard(
     // largest size until the last connection closes.
     yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
     yield* runMigrations();
+    yield* ensureDockSpacesSchema();
+    yield* ensureDockTasksSchema();
+    yield* ensureDockInboxRecapIndexes();
+    yield* ensureDockSidechatSnapshotsSchema();
     // No planner statistics. Collecting them reads every page of the large
     // tables, and stats taken while a table was small make the planner scan it
     // once it grows. Without them SQLite assumes large tables and uses indexes;

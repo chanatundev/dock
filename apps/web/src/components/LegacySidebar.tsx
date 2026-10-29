@@ -1,4 +1,6 @@
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
+import { DockSpacesSwitcher } from "./DockSpacesSwitcher";
+import { useDockSpaceProjectView } from "../state/spaces";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { Spinner } from "~/components/ui/spinner";
 import {
@@ -2808,6 +2810,7 @@ interface SidebarProjectsContentProps {
   suppressProjectClickForContextMenuRef: React.RefObject<boolean>;
   attachProjectListAutoAnimateRef: (node: HTMLElement | null) => void;
   projectsLength: number;
+  emptyProjectMessage: string | null;
 }
 
 const SidebarProjectsContent = memo(function SidebarProjectsContent(
@@ -2851,6 +2854,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     suppressProjectClickForContextMenuRef,
     attachProjectListAutoAnimateRef,
     projectsLength,
+    emptyProjectMessage,
   } = props;
 
   const handleProjectSortOrderChange = (sortOrder: SidebarProjectSortOrder) => {
@@ -3011,7 +3015,9 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
         )}
 
         {projectsLength === 0 && (
-          <div className="px-2 pt-4 text-center text-secondary-label text-xs">No projects yet</div>
+          <div className="px-2 pt-4 text-center text-secondary-label text-xs">
+            {emptyProjectMessage ?? "No projects yet"}
+          </div>
         )}
       </SidebarGroup>
     </SidebarContent>
@@ -3038,7 +3044,7 @@ function openAddProjectCommandPalette() {
 // LegacySidebar frozen and cached on their real inputs; inline, its later hook
 // calls made the compiler recompute them, and the props of every row with them.
 function useLegacySidebarProjects() {
-  const projects = useProjects();
+  const { projects, emptyMessage: emptyProjectMessage } = useDockSpaceProjectView(useProjects());
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const { environments } = useEnvironments();
@@ -3086,6 +3092,7 @@ function useLegacySidebarProjects() {
   });
   return {
     projectsLength: projects.length,
+    emptyProjectMessage,
     orderedProjects,
     physicalToLogicalKey,
     projectPhysicalKeyByScopedRef,
@@ -3289,6 +3296,7 @@ export default function LegacySidebar({ routeReveal }: { routeReveal: SidebarRou
   const terminalFocused = useTerminalFocus();
   const {
     projectsLength,
+    emptyProjectMessage,
     orderedProjects,
     physicalToLogicalKey,
     projectPhysicalKeyByScopedRef,
@@ -3648,6 +3656,7 @@ export default function LegacySidebar({ routeReveal }: { routeReveal: SidebarRou
         <SidebarThreadDetailPrewarmer key={scopedThreadKey(threadRef)} threadRef={threadRef} />
       ))}
       <SidebarChromeHeader isElectron={isElectron} />
+      <DockSpacesSwitcher />
 
       <SidebarProjectsContent
         showArm64IntelBuildWarning={showArm64IntelBuildWarning}
@@ -3687,6 +3696,7 @@ export default function LegacySidebar({ routeReveal }: { routeReveal: SidebarRou
         suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
         attachProjectListAutoAnimateRef={attachProjectListAutoAnimateRef}
         projectsLength={projectsLength}
+        emptyProjectMessage={emptyProjectMessage}
       />
       <SidebarChromeFooter />
     </>

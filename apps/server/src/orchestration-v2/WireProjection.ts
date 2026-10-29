@@ -15,6 +15,11 @@ const MAX_DETAIL_STRING_BYTES = 32_768;
 const MAX_DYNAMIC_VALUE_BYTES = 16_384;
 const MAX_ON_DEMAND_BYTES = 256 * 1024;
 
+// Older clients decode the event union strictly. The ordinary thread.created
+// already announces this capture's thread; its context is fetched on demand.
+export const isClientVisibleOrchestrationEvent = (event: OrchestrationV2DomainEvent) =>
+  event.type !== "sidechat.context-captured";
+
 function truncateDetail(
   value: string | undefined,
   maxBytes = MAX_DETAIL_STRING_BYTES,
@@ -239,6 +244,10 @@ export function projectThreadProjectionForWire(
 export function projectDomainEventForWire(
   event: OrchestrationV2DomainEvent,
 ): OrchestrationV2DomainEvent {
+  if (event.type === "sidechat.context-captured") {
+    const { snapshot: _snapshot, ...notice } = event.payload;
+    return { ...event, payload: notice };
+  }
   return event.type === "turn-item.updated"
     ? { ...event, payload: projectTurnItemForWire(event.payload) }
     : event.type === "context-handoff.updated"

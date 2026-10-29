@@ -33,6 +33,7 @@ import {
 } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as RpcSession from "../rpc/session.ts";
+import { RpcPermissionGuard } from "../rpc/client.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import { v2Now, v2Projection, v2ThreadId } from "../state/orchestrationV2TestFixtures.ts";
 import {
@@ -224,7 +225,7 @@ describe("V2 environment commands", () => {
       const launches: OrchestrationV2ThreadLaunchInput[] = [];
       const supervisor = yield* makeSupervisor({ commands: [], projects: [], launches });
 
-      yield* startThreadTurn({
+      const launch = startThreadTurn({
         commandId: CommandId.make("launch-existing-worktree"),
         threadId: v2ThreadId,
         message: {
@@ -250,6 +251,11 @@ describe("V2 environment commands", () => {
         },
       }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
 
+      expect((yield* launch.pipe(Effect.flip))._tag).toBe("EnvironmentAuthorizationError");
+      expect(launches).toHaveLength(0);
+      yield* launch.pipe(
+        Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
+      );
       expect(launches[0]).toMatchObject({
         threadId: v2ThreadId,
         title: "Continue here",

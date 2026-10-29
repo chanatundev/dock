@@ -6,6 +6,7 @@ import {
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
+  ChatAttachmentId,
   CommandId,
   ContextTransferId,
   EventId,
@@ -58,6 +59,9 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import * as SidechatAssets from "./SidechatAssets.ts";
+import * as ServerConfig from "../config.ts";
+import { createAttachmentId } from "../attachmentStore.ts";
 
 const isLiveStreamBufferError = Schema.is(LiveStreamBufferError);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -86,6 +90,159 @@ const layerTest = Layer.mergeAll(
   layerCommandReceiptStoreProvided,
   IdAllocator.layer,
   layerProjectionMaintenanceProvided,
+);
+const layerAssetTest = layerTest.pipe(
+  Layer.provideMerge(
+    SidechatAssets.layer.pipe(
+      Layer.provideMerge(
+        ServerConfig.layerTest(process.cwd(), { prefix: "dock-side-assets-commit-" }),
+      ),
+      Layer.provideMerge(NodeServices.layer),
+    ),
+  ),
+);
+
+const assetCapture = Effect.fn("test.sidechatAssetCapture")(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const config = yield* ServerConfig.ServerConfig;
+  const now = yield* DateTime.now;
+  const threadId = ThreadId.make("sidechat:asset-commit");
+  const attachmentId = ChatAttachmentId.make(createAttachmentId("parent-assets", "txt")!);
+  const parentPath = path.join(config.attachmentsDir, `${attachmentId}.txt`);
+  yield* fs.makeDirectory(config.attachmentsDir, { recursive: true });
+  yield* fs.writeFileString(parentPath, "frozen");
+  const source = {
+    kind: "thread" as const,
+    threadId: ThreadId.make("parent-assets"),
+    snapshotSequence: 1,
+    capturedAt: DateTime.formatIso(now),
+  };
+  const event: OrchestrationV2DomainEvent = {
+    id: EventId.make("asset-capture"),
+    type: "sidechat.context-captured",
+    threadId,
+    occurredAt: now,
+    payload: {
+      source,
+      itemCount: 1,
+      snapshot: {
+        source,
+        referenceText: "",
+        items: [
+          {
+            id: TurnItemId.make("asset-answer"),
+            threadId: source.threadId,
+            runId: null,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 0,
+            status: "completed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "assistant_message",
+            messageId: MessageId.make("asset-message"),
+            text: "File",
+            streaming: false,
+            attachments: [
+              {
+                type: "file",
+                id: attachmentId,
+                name: "notes.txt",
+                mimeType: "text/plain",
+                sizeBytes: 6,
+              },
+            ],
+          },
+        ],
+      },
+    },
+  };
+  return {
+    threadId,
+    now,
+    parentPath,
+    attachmentId,
+    events: [
+      threadCreatedEvent({ id: "asset-side-created", thread: makeThread(threadId, now), now }),
+      event,
+    ],
+  };
+});
+
+it.effect(
+  "commits snapshot-owned assets once and replays their ownership after parent removal",
+  () =>
+    Effect.gen(function* () {
+      const fixture = yield* assetCapture();
+      const sink = yield* EventSink.EventSinkV2;
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const assets = yield* SidechatAssets.SidechatAssets;
+      const fs = yield* FileSystem.FileSystem;
+      const input = {
+        commandId: CommandId.make("asset-open"),
+        threadId: fixture.threadId,
+        commandType: "thread.create",
+        acceptedAt: fixture.now,
+        events: fixture.events,
+        effects: [],
+      };
+      yield* sink.commitCommand(input);
+      const snapshot = yield* store.getSidechatSnapshot(fixture.threadId);
+      assert.lengthOf(snapshot?.assets ?? [], 1);
+      const owned = snapshot!.assets![0]!;
+      assert.deepEqual(yield* store.getThreadAttachmentIds(fixture.threadId), [
+        owned.attachment!.id,
+      ]);
+      yield* fs.remove(fixture.parentPath);
+      const replay = yield* sink.commitCommand(input);
+      assert.isFalse(replay.committed);
+      assert.deepEqual(yield* store.getSidechatSnapshot(fixture.threadId), snapshot);
+      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.deepEqual(yield* store.getSidechatSnapshot(fixture.threadId), snapshot);
+      assert.equal(yield* fs.readFileString((yield* assets.path(owned.attachment!.id))!), "frozen");
+    }).pipe(Effect.provide(layerAssetTest)),
+);
+
+it.effect("rolls back staged snapshot assets when the command transaction fails", () =>
+  Effect.gen(function* () {
+    const fixture = yield* assetCapture();
+    const sql = yield* SqlClient.SqlClient;
+    const sink = yield* EventSink.EventSinkV2;
+    const fs = yield* FileSystem.FileSystem;
+    const config = yield* ServerConfig.ServerConfig;
+    yield* sql`CREATE TRIGGER reject_sidechat_asset_capture BEFORE INSERT ON dock_projection_sidechat_snapshots BEGIN SELECT RAISE(ABORT, 'test rejection'); END`;
+    const result = yield* Effect.exit(
+      sink.commitCommand({
+        commandId: CommandId.make("asset-open-failed"),
+        threadId: fixture.threadId,
+        commandType: "thread.create",
+        acceptedAt: fixture.now,
+        events: fixture.events,
+        effects: [],
+      }),
+    );
+    assert.equal(result._tag, "Failure");
+    assert.deepEqual(yield* fs.readDirectory(config.attachmentsDir), [
+      `${fixture.attachmentId}.txt`,
+    ]);
+    assert.isNull(
+      yield* (yield* ProjectionStore.ProjectionStoreV2).getSidechatSnapshot(fixture.threadId),
+    );
+    assert.isTrue(
+      Option.isNone(
+        yield* (yield* CommandReceiptStore.CommandReceiptStoreV2).getByCommandId(
+          CommandId.make("asset-open-failed"),
+        ),
+      ),
+    );
+  }).pipe(Effect.provide(layerAssetTest)),
 );
 
 const providerInstanceId = ProviderInstanceId.make("codex");
@@ -217,6 +374,66 @@ it.effect("rebuilds event history one bounded page at a time", () =>
     const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
     assert.isTrue((yield* maintenance.verify).valid);
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "rebuilds immutable side-chat context from events after compaction without streaming it to old clients",
+  () =>
+    Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("sidechat:rebuild");
+      const thread = makeThread(threadId, now);
+      const source = {
+        kind: "thread" as const,
+        threadId: ThreadId.make("deleted-parent"),
+        snapshotSequence: 7,
+        capturedAt: DateTime.formatIso(now),
+      };
+      const boundaryId = EventId.make("sidechat-rebuild-boundary");
+      yield* sink.write({
+        events: [
+          threadCreatedEvent({ id: "sidechat-rebuild-created", thread, now }),
+          {
+            id: EventId.make("sidechat-rebuild-context"),
+            type: "sidechat.context-captured",
+            threadId,
+            occurredAt: now,
+            payload: {
+              source,
+              itemCount: 0,
+              snapshot: { source, items: [], referenceText: "Canonical frozen reference" },
+            },
+          },
+          {
+            id: boundaryId,
+            type: "thread.metadata-updated",
+            threadId,
+            occurredAt: now,
+            payload: thread,
+          },
+        ],
+      });
+      const visible = yield* sink.stream({ threadId, bounded: true }).pipe(
+        Stream.takeUntil((stored) => stored.event.id === boundaryId),
+        Stream.runCollect,
+      );
+      assert.deepEqual(
+        visible.map((stored) => stored.event.type),
+        ["thread.created", "thread.metadata-updated"],
+      );
+      yield* maintenance.compactEventStore;
+      yield* sql`UPDATE dock_projection_sidechat_snapshots
+      SET payload_json=json_set(payload_json,'$.referenceText','Corrupt derived copy') WHERE thread_id=${threadId}`;
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.equal(
+        (yield* store.getSidechatSnapshot(threadId))?.referenceText,
+        "Canonical frozen reference",
+      );
+    }).pipe(Effect.provide(layerTest)),
 );
 
 it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {

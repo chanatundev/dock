@@ -1,7 +1,7 @@
 import { pasteTextToFocusComposer, shouldRedirectInputToComposer } from "./composerFocusRedirect";
 import { readPastedComposerContext } from "../composerInlineTokenPaste";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
-import { useEffect, useRef } from "react";
+import { useEffect, useEffectEvent, useRef } from "react";
 import { isMacPlatform } from "../../lib/utils";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { getTerminalFocusOwner } from "../../lib/terminalFocus";
@@ -14,10 +14,15 @@ import type { ComposerHandleRef } from "../../composerHandleContext";
 export function usePasteToFocusComposer(
   activeThreadId: ThreadId | null,
   composerRef: ComposerHandleRef,
+  acceptsEventTarget?: (target: EventTarget | null) => boolean,
 ) {
+  const ownsTarget = useEffectEvent(
+    (target: EventTarget | null) => acceptsEventTarget?.(target) !== false,
+  );
   const pasteAsTextShortcutUntilRef = useRef(0);
   useEffect(() => {
     const keyHandler = (event: KeyboardEvent) => {
+      if (!ownsTarget(event.target)) return;
       if (
         shouldRedirectInputToComposer(event) &&
         isPasteAsTextShortcut(event, isMacPlatform(navigator.platform))
@@ -26,6 +31,7 @@ export function usePasteToFocusComposer(
       }
     };
     const handler = (event: ClipboardEvent) => {
+      if (!ownsTarget(event.target)) return;
       if (!activeThreadId || isCommandPaletteOpen()) return;
       if (getTerminalFocusOwner() !== null) return;
       if (composerRef.current?.isModelPickerOpen()) return;

@@ -305,6 +305,65 @@ function launchInput(input: {
   };
 }
 
+it.effect("launches side chats with captured provenance without making a native fork", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const parent = yield* launches.launch(
+      launchInput({ command: "side-parent", thread: "side-parent" }),
+    );
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const sourceSnapshot = yield* threads.getThreadSnapshot(parent.threadId);
+    const capturedAt = DateTime.formatIso(yield* DateTime.now);
+    const side = yield* launches.launch({
+      ...launchInput({ command: "side-child", thread: "side-child" }),
+      sidechat: {
+        kind: "thread",
+        threadId: parent.threadId,
+        snapshotSequence: 7,
+        capturedAt: "2026-10-25T12:00:00.000Z",
+      },
+    });
+    assert.equal(side.projection.thread.sidechatSourceThreadId, parent.threadId);
+    assert.isAtLeast(
+      side.projection.thread.sidechatSnapshotSequence ?? -1,
+      sourceSnapshot.snapshotSequence,
+    );
+    assert.notEqual(side.projection.thread.sidechatSnapshotSequence, 7);
+    assert.equal(side.projection.thread.sidechatCapturedAt, capturedAt);
+    assert.isNull(side.projection.thread.forkedFrom);
+    assert.equal(side.projection.thread.lineage.rootThreadId, side.threadId);
+    assert.isNull(side.projection.thread.lineage.parentThreadId);
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("refuses to turn a reused ordinary thread into a side chat", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const original = yield* launches.launch(
+      launchInput({ command: "side-reuse-create", thread: "side-reuse" }),
+    );
+    const result = yield* launches
+      .launch({
+        ...launchInput({ command: "side-reuse-attempt", thread: "side-reuse" }),
+        reuseExistingThread: true,
+        sidechat: {
+          kind: "thread",
+          threadId: ThreadId.make("parent"),
+          snapshotSequence: 1,
+          capturedAt: "2026-10-25T12:00:00.000Z",
+        },
+      })
+      .pipe(Effect.result);
+    assert.isTrue(Result.isFailure(result));
+    assert.isUndefined(
+      (yield* threads.getThreadProjection(original.threadId)).thread.sidechatSourceThreadId,
+    );
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect.each(
   (["new", "existing"] as const).flatMap((target) =>
     (["user", "agent"] as const).map((createdBy) => ({ target, createdBy })),

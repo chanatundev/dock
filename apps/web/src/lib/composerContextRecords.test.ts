@@ -1,6 +1,7 @@
 import {
   type ComposerContextId,
   EnvironmentId,
+  GitHubIssueContextRecord,
   MessageId,
   OrchestrationMessageContext,
   ThreadId,
@@ -32,6 +33,7 @@ import {
 } from "./composerContextRecords";
 
 const decodeMessageContext = Schema.decodeUnknownSync(OrchestrationMessageContext);
+const decodeGitHubIssueContextRecord = Schema.decodeSync(GitHubIssueContextRecord);
 
 const annotation: PreviewAnnotationPayload = {
   id: "ann_1",
@@ -133,6 +135,31 @@ describe("composerContextRecords", () => {
     })!;
     expect(context.records.map((record) => record.kind)).toEqual(["preview-annotation", "file"]);
     expect(context.records[0]).not.toHaveProperty("screenshotContextId");
+  });
+
+  it("decodes a persisted GitHub issue context record for read-only display", () => {
+    const issue = decodeGitHubIssueContextRecord({
+      version: 1,
+      contextId: "github-issue_owner_repo_12",
+      kind: "github-issue",
+      label: "#12 Fix checkout retry",
+      environmentId: EnvironmentId.make("env"),
+      projectId: "project-a",
+      host: "github.com",
+      repository: "owner/repo",
+      number: 12,
+      url: "https://github.com/owner/repo/issues/12",
+      title: "Fix checkout retry",
+      state: "open",
+      sourceUpdatedAt: "2026-10-01T10:00:00.000Z",
+      capturedAt: "2026-10-02T11:00:00.000Z",
+      body: "Retry the payment after a timeout.",
+      bodyTruncated: false,
+      comments: [],
+      totalComments: 0,
+      omittedComments: 0,
+    });
+    expect(decodeMessageContext({ version: 1, records: [issue] }).records).toEqual([issue]);
   });
   it.each(["x", "terminal_x"])(
     "preserves canonical terminal IDs across repeated imports: %s",

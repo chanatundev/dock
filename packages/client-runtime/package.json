@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./task-board": {
+      "types": "./src/taskBoard.ts",
+      "default": "./src/taskBoard.ts"
+    },
     "./workspace-basename-lookup": {
       "types": "./src/workspaceBasenameLookup.ts",
       "default": "./src/workspaceBasenameLookup.ts"

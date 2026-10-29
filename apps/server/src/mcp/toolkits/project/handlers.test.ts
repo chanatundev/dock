@@ -1,8 +1,11 @@
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  CommandId,
   ProjectId,
   ProviderInstanceId,
+  SpaceId,
+  type SpaceCommand,
   type Project as ProjectRecord,
   type ModelSelection,
   type RuntimeMode,
@@ -15,12 +18,15 @@ import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as Schema from "effect/Schema";
+import { McpSchema, Tool } from "effect/ai";
 
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as Project from "../../../project/ProjectService.ts";
+import * as Spaces from "../../../spaces/SpaceService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../../../vcs/VcsProcess.ts";
@@ -28,6 +34,13 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as ProjectHandlers from "./handlers.ts";
 import { ProjectToolkit } from "./tools.ts";
+
+const decodeMcpInputSchema = Schema.decodeUnknownSync(McpSchema.ToolJson);
+it("publishes Space tool parameters as MCP-compatible object schemas", () => {
+  for (const tool of [ProjectToolkit.tools.t3_space_list, ProjectToolkit.tools.t3_space_mutate]) {
+    expect(decodeMcpInputSchema(Tool.getJsonSchema(tool)).type).toBe("object");
+  }
+});
 
 const clientLaunchHarness = (input: {
   readonly runtimeModeCeiling: RuntimeMode;
@@ -37,6 +50,7 @@ const clientLaunchHarness = (input: {
   readonly launched: Array<ThreadLaunch.ThreadLaunchInput>;
   readonly workspaceRoot?: string;
   readonly checkWorktreeBase?: ThreadLaunch.ThreadLaunchService["Service"]["checkWorktreeBase"];
+  readonly spaces?: Partial<Spaces.SpaceService["Service"]>;
 }) => {
   const projectId = ProjectId.make("project:client-target");
   const modelSelection = {
@@ -71,6 +85,7 @@ const clientLaunchHarness = (input: {
       capabilities: new Set(["orchestration" as const]),
     }),
     Layer.mock(ThreadManagement.ThreadManagementService)({}),
+    Layer.mock(Spaces.SpaceService)(input.spaces ?? {}),
     Layer.mock(ThreadLaunch.ThreadLaunchService)({
       checkWorktreeBase: input.checkWorktreeBase ?? (() => Effect.void),
       launch: (launch) => {
@@ -115,6 +130,79 @@ const clientLaunchHarness = (input: {
   );
   return { projectId, modelSelection, dependencies: layerDependencies };
 };
+
+it.effect("Space tools allow reading but refuse a read-only MCP client's mutation", () =>
+  Effect.gen(function* () {
+    let mutations = 0;
+    const received: SpaceCommand[] = [];
+    const snapshot = { sequence: 7, spaces: [], projectAssignments: [] };
+    const { dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "full-access",
+      launched: [],
+      spaces: {
+        list: Effect.succeed(snapshot),
+        dispatch: (command) =>
+          Effect.sync(() => {
+            received.push(command);
+            return { sequence: ++mutations };
+          }),
+      },
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const scope = yield* McpInvocationContext.McpInvocationContext.pipe(
+      Effect.provide(dependencies),
+    );
+    const read = toolkit.handle("t3_space_list", {}).pipe(
+      Stream.unwrap,
+      Stream.runCollect,
+      Effect.provideService(McpInvocationContext.McpInvocationContext, {
+        ...scope,
+        client: { sessionId: "read-only", label: "Reader", access: "read-only" },
+      }),
+      Effect.provide(dependencies),
+    );
+    expect((yield* read).at(-1)?.result).toEqual(snapshot);
+    const command = {
+      type: "space.delete" as const,
+      commandId: CommandId.make("delete-work"),
+      spaceId: SpaceId.make("work"),
+    };
+    const mutate = toolkit
+      .handle("t3_space_mutate", { command })
+      .pipe(Stream.unwrap, Stream.runCollect);
+    const denied = yield* mutate.pipe(
+      Effect.provideService(McpInvocationContext.McpInvocationContext, {
+        ...scope,
+        client: { sessionId: "read-only", label: "Reader", access: "read-only" },
+      }),
+      Effect.provide(dependencies),
+    );
+    expect(denied.at(-1)?.result).toMatchObject({ code: "capability_denied" });
+    expect(mutations).toBe(0);
+    expect((yield* mutate.pipe(Effect.provide(dependencies))).at(-1)?.result).toEqual({
+      sequence: 1,
+    });
+    expect(mutations).toBe(1);
+    expect(received[0]).toEqual(command);
+    const created = yield* toolkit
+      .handle("t3_space_mutate", {
+        command: { type: "space.create", name: "Work", icon: "bag" },
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    expect(created.at(-1)?.result).toMatchObject({ sequence: 2, spaceId: expect.any(String) });
+    expect(received[1]).toMatchObject({
+      type: "space.create",
+      name: "Work",
+      icon: "bag",
+      commandId: expect.any(String),
+      spaceId: expect.any(String),
+    });
+  }),
+);
 
 it.effect(
   "a client launches with the project's default model and mode, capped at its ceiling",

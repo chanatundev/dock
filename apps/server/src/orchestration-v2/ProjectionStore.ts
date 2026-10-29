@@ -1,3 +1,4 @@
+import { sidechatThreadMetadata } from "@t3tools/shared/sidechatThread";
 import { applyThreadPullRequestLinkUpdate } from "@t3tools/shared/threadPullRequests";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
@@ -35,6 +36,7 @@ import type {
   OrchestrationV2ThreadShell,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
+  OrchestrationV2SidechatSnapshot,
   ProjectId,
   ProviderSessionId,
   ProviderThreadId,
@@ -89,6 +91,7 @@ import type * as Statement from "effect/sql/Statement";
 
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
+import { readSidechatSnapshot, writeSidechatSnapshot } from "./sidechatSnapshotStore.ts";
 import {
   isThreadHistoryUserTurn,
   isConversationHistoryItem,
@@ -488,6 +491,9 @@ export interface ProjectionStoreV2Shape {
     threadId: ThreadId,
     runIds?: ReadonlyArray<RunId>,
   ) => Effect.Effect<ReadonlyArray<OrchestrationV2TurnItem>, ProjectionStoreV2Error>;
+  readonly getSidechatSnapshot: (
+    threadId: ThreadId,
+  ) => Effect.Effect<OrchestrationV2SidechatSnapshot | null, ProjectionStoreV2Error>;
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, ProjectionStoreV2Error>;
@@ -764,6 +770,7 @@ export function applyToProjection(
   projection: OrchestrationV2ThreadProjection,
   event: OrchestrationV2DomainEvent,
 ): OrchestrationV2ThreadProjection {
+  if (event.type === "sidechat.context-captured") return projection;
   const base = {
     ...projection,
     thread: {
@@ -944,6 +951,7 @@ export function applyToProjection(
  * too: the latest event wins across app threads.
  */
 export interface ProjectionReplayState {
+  readonly sidechatSnapshots: Map<ThreadId, OrchestrationV2SidechatSnapshot>;
   readonly projections: Map<ThreadId, OrchestrationV2ThreadProjection>;
   readonly providerSessionThreadIds: Map<ProviderSessionId, ReadonlySet<ThreadId>>;
   readonly providerThreadInstanceIds: Map<ProviderThreadId, ProviderInstanceId>;
@@ -951,6 +959,7 @@ export interface ProjectionReplayState {
 
 function makeProjectionReplayState(): ProjectionReplayState {
   return {
+    sidechatSnapshots: new Map(),
     projections: new Map(),
     providerSessionThreadIds: new Map(),
     providerThreadInstanceIds: new Map(),
@@ -961,6 +970,11 @@ function applyToProjectionReplayState(
   state: ProjectionReplayState,
   event: OrchestrationV2DomainEvent,
 ): boolean {
+  if (event.type === "sidechat.context-captured") {
+    if (event.payload.snapshot !== undefined)
+      state.sidechatSnapshots.set(event.threadId, event.payload.snapshot);
+    return state.projections.has(event.threadId);
+  }
   if (event.type === "thread.created" && !state.projections.has(event.threadId)) {
     state.projections.set(event.threadId, emptyProjection(event));
     return true;
@@ -1580,6 +1594,7 @@ export function threadShellFromProjection(
   return {
     createdBy: projection.thread.createdBy,
     creationSource: projection.thread.creationSource,
+    ...sidechatThreadMetadata(projection.thread),
     id: projection.thread.id,
     projectId: projection.thread.projectId,
     title: projection.thread.title,
@@ -1839,6 +1854,7 @@ function shellFromState(input: {
   return {
     createdBy: input.state.thread.createdBy,
     creationSource: input.state.thread.creationSource,
+    ...sidechatThreadMetadata(input.state.thread),
     id: input.state.thread.id,
     projectId: input.state.thread.projectId,
     title: input.state.thread.title,
@@ -1931,6 +1947,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       Effect.fnUntraced(
         function* (event) {
           switch (event.type) {
+            case "sidechat.context-captured": {
+              if (event.payload.snapshot === undefined) {
+                return yield* new ProjectionStoreApplyEventError({
+                  eventType: event.type,
+                  cause: "Stored side-chat capture is missing its snapshot.",
+                });
+              }
+              yield* writeSidechatSnapshot(event.threadId, event.payload.snapshot).pipe(
+                Effect.provideService(SqlClient.SqlClient, sql),
+              );
+              break;
+            }
             case "thread.pull-request-link-updated": {
               const thread = yield* getThread(event.threadId);
               yield* apply({
@@ -2773,6 +2801,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
           if (
             event.type !== "thread.created" &&
+            event.type !== "sidechat.context-captured" &&
             event.type !== "thread.archived" &&
             event.type !== "thread.unarchived" &&
             event.type !== "thread.deleted" &&
@@ -5229,10 +5258,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         AND type = 'dynamic_tool'
         AND (payload_json LIKE '%htmlRender%' OR payload_json LIKE ${`%${MCP_APP_OUTPUT_KEY}%`})
     `,
+        readSidechatSnapshot(threadId).pipe(Effect.provideService(SqlClient.SqlClient, sql)),
       ]).pipe(
-        Effect.map(([messages, renders]) => [
+        Effect.map(([messages, renders, snapshot]) => [
           ...new Set([
             ...messages.map((row) => row.id),
+            ...(snapshot?.assets?.flatMap((asset) =>
+              asset.attachment === null ? [] : [asset.attachment.id],
+            ) ?? []),
             ...threadHtmlRenderAttachmentIds(
               threadId,
               renders.map((row) => {
@@ -6550,6 +6583,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadProjection,
       getTurnStartContext: readOnReader(getTurnStartContext),
       getTurnStartHistory: readOnReader(getTurnStartHistory),
+      getSidechatSnapshot: (threadId) =>
+        readOnReader(readSidechatSnapshot)(threadId).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql),
+          Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
+        ),
       getRuntimeRecoveryProjection: readOnReader(getRuntimeRecoveryProjection),
       getRunningTurnContext: readOnReader(getRunningTurnContext),
       getThreadProviderContext: readOnReader(getThreadProviderContext),
@@ -6596,6 +6634,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
         Effect.fnUntraced(function* (event) {
           const result = yield* Ref.modify(replayState, (existing) => {
             const next: ProjectionReplayState = {
+              sidechatSnapshots: new Map(existing.sidechatSnapshots),
               projections: new Map(existing.projections),
               providerSessionThreadIds: new Map(existing.providerSessionThreadIds),
               providerThreadInstanceIds: new Map(existing.providerThreadInstanceIds),
@@ -6614,6 +6653,10 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           }
           yield* Ref.update(sequence, (current) => current + 1);
         }),
+      getSidechatSnapshot: (threadId) =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) => state.sidechatSnapshots.get(threadId) ?? null),
+        ),
       getShellSnapshot: Effect.fn("ProjectionStore.getShellSnapshot")(function* (options) {
         const existing = (yield* Ref.get(replayState)).projections;
         const selectedThreadIds = [...existing.entries()]
@@ -6881,9 +6924,15 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           ),
         ),
       getThreadAttachmentIds: (threadId) =>
-        service.getThreadProjection(threadId).pipe(
-          Effect.map((projection) => [
+        Effect.all([
+          service.getThreadProjection(threadId),
+          service.getSidechatSnapshot(threadId),
+        ]).pipe(
+          Effect.map(([projection, snapshot]) => [
             ...new Set([
+              ...(snapshot?.assets?.flatMap((asset) =>
+                asset.attachment === null ? [] : [asset.attachment.id],
+              ) ?? []),
               ...projection.messages.flatMap((message) =>
                 message.attachments.map((attachment) => attachment.id),
               ),

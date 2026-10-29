@@ -1,4 +1,5 @@
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 
 import type { OpenPreviewMutation } from "./browser/openFileInPreview";
 import type { ClosedView, ClosedViewEntry } from "./closedViewStore";
@@ -133,6 +134,11 @@ export async function reopenClosedView(
       break;
     case "pull-request":
       panels.openPullRequest(ref, surface);
+      break;
+    case "sidechat-tool":
+      return false;
+    case "sidechat":
+      panels.openSidechat(ref, scopeThreadRef(surface.environmentId, surface.threadId));
       break;
     default:
       panels.open(ref, surface.kind);

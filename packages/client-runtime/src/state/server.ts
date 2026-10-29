@@ -48,6 +48,8 @@ import {
   type EnvironmentRpcInput,
 } from "../rpc/client.ts";
 import type { RpcSession } from "../rpc/session.ts";
+import { projectSpacesStream } from "./spaces.ts";
+import { projectTasksStream } from "./tasks.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 import {
   applyServerConfigProjection,
@@ -993,6 +995,11 @@ export function createServerEnvironmentAtoms<R, E>(
     scheduler: configScheduler,
     concurrency: configConcurrency,
   });
+  const tasksLive = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "environment-data:tasks:live",
+    tag: WS_METHODS.tasksSubscribe,
+    transform: projectTasksStream,
+  });
 
   return {
     configValueAtom,
@@ -1112,6 +1119,54 @@ export function createServerEnvironmentAtoms<R, E>(
     scheduledTasksLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:scheduled-tasks:live",
       tag: WS_METHODS.scheduledTasksSubscribe,
+    }),
+    spacesLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:spaces:live",
+      tag: WS_METHODS.spacesSubscribe,
+      transform: projectSpacesStream,
+    }),
+    sidechatView: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:sidechat:view",
+      tag: WS_METHODS.sidechatView,
+      idleTtlMs: 0,
+    }),
+    sidechatContext: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:sidechat:context",
+      tag: WS_METHODS.sidechatReadContext,
+    }),
+    openSidechat: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:sidechat:open",
+      tag: WS_METHODS.sidechatOpen,
+    }),
+    sendSidechatToParent: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:sidechat:send-to-parent",
+      tag: WS_METHODS.sidechatSendToParent,
+    }),
+    tasksLive,
+    inboxRecap: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:inbox:recap",
+      tag: WS_METHODS.inboxReadRecap,
+      staleTimeMs: 20_000,
+    }),
+    taskDetail: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:tasks:detail",
+      tag: WS_METHODS.tasksGet,
+    }),
+    taskHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:tasks:history",
+      tag: WS_METHODS.tasksHistory,
+    }),
+    dispatchTaskCommand: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:tasks:dispatch",
+      tag: WS_METHODS.tasksDispatch,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    dispatchSpaceCommand: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:spaces:dispatch",
+      tag: WS_METHODS.spacesDispatch,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
     }),
     // A cold transcript scan is measured in seconds, so keep the result around
     // long enough that switching windows or re-rendering does not rescan.

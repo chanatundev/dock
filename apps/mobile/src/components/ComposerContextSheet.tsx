@@ -256,6 +256,41 @@ export function ComposerContextSheet(props: {
                 ) : null}
               </>
             ) : null}
+            {record.kind === "github-issue" ? (
+              <View className="gap-3">
+                <ContextField
+                  label={`${record.repository}#${record.number} · ${record.state}`}
+                  value={record.title}
+                />
+                <ContextField
+                  label="Captured"
+                  value={new Date(record.capturedAt).toLocaleString()}
+                />
+                <ContextField
+                  label="Issue updated"
+                  value={new Date(record.sourceUpdatedAt).toLocaleString()}
+                />
+                <ContextField label="URL" value={record.url} />
+                <ContextField label="Description" value={record.body || "No description."} />
+                {record.bodyTruncated ? (
+                  <Text className="text-sm text-foreground-muted">
+                    Description shortened in this snapshot.
+                  </Text>
+                ) : null}
+                {record.comments.map((comment) => (
+                  <ContextField
+                    key={comment.id}
+                    label={`${comment.author?.login ?? "Unknown author"} · ${new Date(comment.createdAt).toLocaleString()}`}
+                    value={`${comment.body}${comment.bodyTruncated ? "\nComment shortened." : ""}`}
+                  />
+                ))}
+                {record.omittedComments > 0 ? (
+                  <Text className="text-sm text-foreground-muted">
+                    {record.omittedComments} comments omitted from this snapshot.
+                  </Text>
+                ) : null}
+              </View>
+            ) : null}
             {record.kind === "preview-annotation" ? (
               <>
                 <ContextField label="Page" value={record.pageTitle ?? record.pageUrl} />

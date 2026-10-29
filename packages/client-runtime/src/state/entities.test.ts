@@ -7,6 +7,7 @@ import {
   ProviderThreadId,
   RunId,
   RuntimeRequestId,
+  ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -22,6 +23,22 @@ import { canSnooze, effectiveSnoozed } from "./threadSettled.ts";
 const environmentId = EnvironmentId.make("environment-v2");
 
 describe("V2 client presentation", () => {
+  it("preserves side-chat provenance and expiry through the shared client presentation", () => {
+    const metadata = {
+      sidechatSourceThreadId: ThreadId.make("side-parent"),
+      sidechatContext: null,
+      sidechatCapturedAt: "2026-10-25T12:00:00.000Z",
+      sidechatSnapshotSequence: 8,
+      sidechatLastActivityAt: "2026-10-25T13:00:00.000Z",
+      sidechatExpiredAt: "2026-10-25T14:00:00.000Z",
+    };
+    expect(presentThreadShell(environmentId, { ...v2ThreadShell, ...metadata })).toMatchObject(
+      metadata,
+    );
+    expect(presentThreadShell(environmentId, v2ThreadShell)).not.toHaveProperty(
+      "sidechatSourceThreadId",
+    );
+  });
   it("keeps async questions in Working until the run completes", () => {
     const runId = RunId.make("run-async-question");
     const running = {

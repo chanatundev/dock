@@ -51,6 +51,8 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
+  type OrchestrationV2SidechatSnapshot,
+  type SidechatSource,
   latestProviderTurnForAttempt,
   orchestrationV2RunWorkStartedAt,
   ProviderInstanceId,
@@ -70,6 +72,7 @@ import {
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import { githubIssueContextReferenceText } from "@t3tools/shared/githubIssueContext";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -77,10 +80,20 @@ import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as PubSub from "effect/PubSub";
+import type * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ProjectStore from "./ProjectStore.ts";
+import { isSidechatThread } from "@t3tools/shared/sidechatThread";
+import { sidechatExpiryMs } from "@t3tools/shared/sidechatExpiry";
+import {
+  isExpiredSidechat,
+  latestSidechatActivityAt,
+  sidechatActivityInstantsEqual,
+  SIDECHAT_EXPIRED_EXECUTION_MESSAGE,
+} from "./sidechatLifecycle.ts";
 import {
   isCheckpointRestoreIsolated,
   SHARED_WORKSPACE_RESTORE_MESSAGE,
@@ -297,6 +310,11 @@ export interface OrchestratorV2DispatchResult {
 }
 
 export interface OrchestratorV2Shape {
+  readonly acquireSidechatView: (
+    threadId: ThreadId,
+  ) => Effect.Effect<void, OrchestratorV2Error, Scope.Scope>;
+  readonly getViewedSidechatIds: Effect.Effect<readonly ThreadId[]>;
+  readonly streamSidechatViewChanges: Stream.Stream<ThreadId>;
   readonly resumeQueuedRuns: Effect.Effect<number, OrchestratorV2Error>;
   readonly recoverDelegatedTasks: Effect.Effect<void>;
   readonly recoverDelegatedTask: (threadId: ThreadId, sourceRunId: RunId) => Effect.Effect<void>;
@@ -459,6 +477,8 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.pin.reorder":
     case "thread.active.reorder":
     case "thread.visit":
+    case "thread.sidechat.activity.record":
+    case "thread.sidechat.expire":
     case "thread.mark-unread":
     case "thread.metadata.update":
     case "thread.pull-request.link":
@@ -952,6 +972,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+  // View leases share the command lock so opening a view and expiring it have one order.
+  // They are process-local: disconnected clients must reacquire after a server restart.
+  const sidechatViewCounts = new Map<ThreadId, number>();
+  const sidechatViewChanges = yield* PubSub.unbounded<ThreadId>();
 
   const mapDispatchError =
     (command: OrchestrationV2ServerCommand) =>
@@ -1420,6 +1444,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
+        isExpiredSidechat(projection.thread) ||
         projection.runs.some(isBlockingRun) ||
         projection.runs.some((run) => run.status === "queued" && run.queueHeld === true)
       ) {
@@ -2442,6 +2467,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     command: Extract<OrchestrationV2Command, { readonly type: "thread.create" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) {
+    if (command.sidechat !== undefined && command.importedNativeThread !== undefined) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "A side chat must start an independent provider conversation.",
+      });
+    }
     yield* Effect.annotateCurrentSpan({
       "orchestration_v2.command_id": command.commandId,
       "orchestration_v2.command_type": command.type,
@@ -2463,7 +2495,50 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
 
+    const sourceSnapshot =
+      command.sidechat?.kind === "thread"
+        ? yield* projectionStore
+            .getThreadSnapshot(command.sidechat.threadId)
+            .pipe(mapDispatchError(command))
+        : null;
+    if (sourceSnapshot?.projection.thread.deletedAt != null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "A deleted thread cannot start a new side chat.",
+      });
+    }
     const now = yield* DateTime.now;
+    const sidechat: SidechatSource | undefined =
+      command.sidechat === undefined
+        ? undefined
+        : command.sidechat.kind === "thread"
+          ? {
+              ...command.sidechat,
+              capturedAt: DateTime.formatIso(now),
+              snapshotSequence: sourceSnapshot?.snapshotSequence ?? 0,
+            }
+          : {
+              kind: "github-issue",
+              context: command.sidechat.context,
+              capturedAt: DateTime.formatIso(now),
+            };
+    const issueReference =
+      command.sidechat?.kind === "github-issue" ? command.sidechat.reference : undefined;
+    const snapshot: OrchestrationV2SidechatSnapshot | undefined =
+      sidechat === undefined
+        ? undefined
+        : {
+            source: sidechat,
+            items: sourceSnapshot?.projection.visibleTurnItems.map((row) => row.item) ?? [],
+            ...(issueReference === undefined ? {} : { issueContext: issueReference }),
+            referenceText:
+              issueReference !== undefined
+                ? githubIssueContextReferenceText(issueReference)
+                : sidechat.kind === "github-issue"
+                  ? `GitHub issue #${sidechat.context.number}: ${sidechat.context.title}\n${sidechat.context.url}`
+                  : "",
+          };
     const emitEvent = emit(events, command);
     const thread: OrchestrationV2AppThread = {
       createdBy: command.createdBy,
@@ -2471,6 +2546,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       id: command.threadId,
       projectId: command.projectId,
       title: command.title,
+      ...(sidechat === undefined
+        ? {}
+        : {
+            sidechatSourceThreadId: sidechat.kind === "thread" ? sidechat.threadId : null,
+            sidechatContext: sidechat.kind === "github-issue" ? sidechat.context : null,
+            sidechatCapturedAt: sidechat.capturedAt,
+            ...(sidechat.kind === "thread"
+              ? { sidechatSnapshotSequence: sidechat.snapshotSequence }
+              : {}),
+            sidechatLastActivityAt: DateTime.formatIso(now),
+            sidechatExpiredAt: null,
+          }),
       providerInstanceId: command.modelSelection.instanceId,
       modelSelection: command.modelSelection,
       runtimeMode: command.runtimeMode,
@@ -2503,6 +2590,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: thread,
     });
+    if (snapshot !== undefined) {
+      yield* emitEvent({
+        type: "sidechat.context-captured",
+        threadId: command.threadId,
+        occurredAt: now,
+        payload: { source: snapshot.source, itemCount: snapshot.items.length, snapshot },
+      });
+    }
     if (command.importedNativeThread !== undefined) {
       yield* emitEvent({
         type: "provider-thread.updated",
@@ -3789,6 +3884,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command: Extract<OrchestrationV2Command, { readonly type: "provider-session.detach" }>,
       events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
       effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+      revokeMcpCredential = false,
     ) {
       const projection = yield* projectionStore
         .getThreadRecords(command.threadId, ["providerSessions"])
@@ -3831,9 +3927,111 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           type: "provider-session.detach",
           providerSessionId: command.providerSessionId,
           ...(command.reason === undefined ? {} : { detail: command.reason }),
+          ...(revokeMcpCredential ? { revokeMcpCredential: true } : {}),
         },
       } satisfies PendingOrchestrationEffectV2;
       yield* Ref.update(effects, (existing) => [...existing, pendingEffect]);
+    },
+  );
+
+  const dispatchSidechatLifecycle = Effect.fn("orchestrationV2.dispatch.sidechatLifecycle")(
+    function* (
+      command: Extract<
+        OrchestrationV2InternalCommand,
+        { readonly type: "thread.sidechat.activity.record" | "thread.sidechat.expire" }
+      >,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+      effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    ) {
+      const thread = yield* projectionStore
+        .getThread(command.threadId)
+        .pipe(mapDispatchError(command));
+      if (!isSidechatThread(thread) || isExpiredSidechat(thread) || thread.deletedAt !== null)
+        return;
+      const now = yield* DateTime.now;
+      const currentActivity = latestSidechatActivityAt(
+        thread.sidechatLastActivityAt,
+        DateTime.formatIso(thread.updatedAt),
+      );
+      if (command.type === "thread.sidechat.activity.record") {
+        const activityAt = latestSidechatActivityAt(currentActivity, command.activityAt);
+        if (
+          thread.sidechatLastActivityAt != null &&
+          sidechatActivityInstantsEqual(thread.sidechatLastActivityAt, activityAt)
+        )
+          return;
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          occurredAt: now,
+          // Preserve the activity instant across persistence retries.
+          payload: {
+            ...thread,
+            updatedAt: DateTime.makeUnsafe(activityAt),
+            sidechatLastActivityAt: activityAt,
+          },
+        });
+        return;
+      }
+      const settings = yield* serverSettings.getSettings.pipe(mapDispatchError(command));
+      const windowMs = sidechatExpiryMs(settings.sidechatExpiry);
+      if (
+        thread.archivedAt !== null ||
+        windowMs === null ||
+        (sidechatViewCounts.get(command.threadId) ?? 0) > 0 ||
+        !sidechatActivityInstantsEqual(currentActivity, command.expectedLastActivityAt) ||
+        DateTime.toEpochMillis(now) - Date.parse(currentActivity) < windowMs
+      )
+        return;
+      const projection = yield* projectionStore
+        .getThreadRecords(
+          command.threadId,
+          ["runs", "runtimeRequests", "providerThreads", "providerSessions", "turnItems"],
+          {
+            turnItemTypes: ["command_execution", "dynamic_tool", "subagent"],
+            turnItemStatuses: ["running", "waiting"],
+          },
+        )
+        .pipe(mapDispatchError(command));
+      if (
+        projection.runs.some((run) => run.status === "queued" || isBlockingRun(run)) ||
+        projection.runtimeRequests.some((request) => request.status === "pending") ||
+        pendingBackgroundTurnItems(projection).length > 0 ||
+        derivePendingBackgroundWork({ ...projection, latestRun: projection.runs.at(-1) }).length > 0
+      )
+        return;
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.metadata-updated",
+        threadId: command.threadId,
+        occurredAt: now,
+        payload: {
+          ...thread,
+          updatedAt: now,
+          sidechatLastActivityAt: currentActivity,
+          sidechatExpiredAt: DateTime.formatIso(now),
+        },
+      });
+      for (const session of projection.providerSessions) {
+        if (session.status === "stopped" || session.status === "error") continue;
+        yield* dispatchProviderSessionDetach(
+          {
+            type: "provider-session.detach",
+            commandId: command.commandId,
+            threadId: command.threadId,
+            providerSessionId: session.id,
+            reason: SIDECHAT_EXPIRED_EXECUTION_MESSAGE,
+          },
+          events,
+          effects,
+          true,
+        );
+      }
     },
   );
 
@@ -5683,22 +5881,50 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           driver: adapter.driver,
           nativeThreadId: `pending:${runId}`,
         });
-      const legacyImportHandoff = shouldPrepareLegacyImportHandoff({
-        historyOrigin: projection.thread.historyOrigin,
-        hasCompletedRun: latestCompletedRun !== undefined,
-        legacyImportItemCount: legacyImportItems.length,
-      })
-        ? yield* contextHandoffService
-            .prepareLegacyImport({
-              threadId: command.threadId,
-              targetRunId: runId,
-              toProviderThreadId: providerThreadId,
-              toProviderInstanceId: modelSelection.instanceId,
-              items: legacyImportItems,
-              createdAt: now,
-            })
+      const needsSidechatContext =
+        isSidechatThread(projection.thread) &&
+        latestCompletedRun === undefined &&
+        activeProviderThread?.nativeThreadRef == null;
+      const sidechatSnapshot = needsSidechatContext
+        ? yield* projectionStore
+            .getSidechatSnapshot(command.threadId)
             .pipe(mapDispatchError(command))
         : null;
+      if (needsSidechatContext && sidechatSnapshot === null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The frozen side-chat context is unavailable. Start a new side chat.",
+        });
+      }
+      const initialContextHandoff =
+        sidechatSnapshot !== null
+          ? yield* contextHandoffService
+              .prepareSidechat({
+                threadId: command.threadId,
+                targetRunId: runId,
+                toProviderThreadId: providerThreadId,
+                toProviderInstanceId: modelSelection.instanceId,
+                snapshot: sidechatSnapshot,
+                createdAt: now,
+              })
+              .pipe(mapDispatchError(command))
+          : shouldPrepareLegacyImportHandoff({
+                historyOrigin: projection.thread.historyOrigin,
+                hasCompletedRun: latestCompletedRun !== undefined,
+                legacyImportItemCount: legacyImportItems.length,
+              })
+            ? yield* contextHandoffService
+                .prepareLegacyImport({
+                  threadId: command.threadId,
+                  targetRunId: runId,
+                  toProviderThreadId: providerThreadId,
+                  toProviderInstanceId: modelSelection.instanceId,
+                  items: legacyImportItems,
+                  createdAt: now,
+                })
+                .pipe(mapDispatchError(command))
+            : null;
       const providerThread: OrchestrationV2ProviderThread =
         activeProviderThread === undefined
           ? {
@@ -5713,7 +5939,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               status: "not_loaded",
               firstRunOrdinal: ordinal,
               lastRunOrdinal: ordinal,
-              handoffIds: legacyImportHandoff === null ? [] : [legacyImportHandoff.id],
+              handoffIds: initialContextHandoff === null ? [] : [initialContextHandoff.id],
               forkedFrom: null,
               createdAt: now,
               updatedAt: now,
@@ -5724,7 +5950,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               lastRunOrdinal: ordinal,
               handoffIds: appendContextHandoffId(
                 activeProviderThread.handoffIds,
-                legacyImportHandoff?.id ?? null,
+                initialContextHandoff?.id ?? null,
               ),
               updatedAt: now,
             };
@@ -5769,7 +5995,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         startedAt: null,
         completedAt: null,
         checkpointId: null,
-        contextHandoffId: legacyImportHandoff?.id ?? null,
+        contextHandoffId: initialContextHandoff?.id ?? null,
         ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
         ...(command.restartContinuationOfRunId === undefined
           ? {}
@@ -5892,14 +6118,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: providerThread,
       });
-      if (legacyImportHandoff !== null) {
+      if (initialContextHandoff !== null) {
         yield* emitEvent({
           type: "context-handoff.updated",
           threadId: command.threadId,
           runId,
           providerInstanceId: modelSelection.instanceId,
           occurredAt: now,
-          payload: legacyImportHandoff,
+          payload: initialContextHandoff,
         });
       }
       yield* emitEvent({
@@ -11367,12 +11593,35 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           readonly reason: string;
         }
       | undefined;
+    if (
+      command.type === "prepared-run.retry" ||
+      command.type === "prepared-run.release" ||
+      command.type === "checkpoint.rollback" ||
+      command.type === "queued-run.start" ||
+      command.type === "queue.resume" ||
+      command.type === "queued-message.promote-to-steer"
+    ) {
+      const thread = yield* projectionStore
+        .getThread(command.threadId)
+        .pipe(mapDispatchError(command));
+      if (isExpiredSidechat(thread)) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: new Error(SIDECHAT_EXPIRED_EXECUTION_MESSAGE),
+        });
+      }
+    }
     switch (command.type) {
       case "thread.create":
         yield* dispatchThreadCreate(command, events);
         break;
       case "thread.visit":
         yield* dispatchThreadVisit(command, events);
+        break;
+      case "thread.sidechat.activity.record":
+      case "thread.sidechat.expire":
+        yield* dispatchSidechatLifecycle(command, events, effects);
         break;
       case "thread.auto-settle": {
         // Automatic settlement (#8600): the sweep evaluated a shell snapshot,
@@ -11481,6 +11730,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return yield* new OrchestratorSubagentThreadReadOnlyError({
             commandId: command.commandId,
             threadId: command.threadId,
+          });
+        }
+        if (isExpiredSidechat(thread)) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: new Error(SIDECHAT_EXPIRED_EXECUTION_MESSAGE),
           });
         }
         yield* dispatchMessage(command, events, effects);
@@ -11756,6 +12012,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.flatMap((planned) =>
         planned.events.length > 0 ||
         command.type === "thread.background-work.settle" ||
+        command.type === "thread.sidechat.activity.record" ||
+        command.type === "thread.sidechat.expire" ||
         command.type === "thread.stop" ||
         command.type === "subagent.stop"
           ? Effect.succeed(planned)
@@ -11904,6 +12162,63 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     return yield* parentThreadId === undefined
       ? dispatch
       : threadDispatch.withLock(parentThreadId, dispatch);
+  });
+
+  const touchSidechatView = Effect.fn("orchestrationV2.sidechatView.activity")(function* (
+    threadId: ThreadId,
+  ) {
+    const commandId = yield* idAllocator.allocate
+      .command({ fixtureName: "sidechat-view", commandName: "activity" })
+      .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+    yield* dispatchWithReceiptEffect({
+      type: "thread.sidechat.activity.record",
+      commandId,
+      threadId,
+      activityAt: DateTime.formatIso(yield* DateTime.now),
+    });
+  });
+  const acquireSidechatView = Effect.fn("orchestrationV2.sidechatView.acquire")(function* (
+    threadId: ThreadId,
+  ) {
+    yield* Effect.acquireRelease(
+      threadDispatch.withLock(
+        threadId,
+        Effect.gen(function* () {
+          const thread = yield* projectionStore
+            .getThread(threadId)
+            .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+          if (!isSidechatThread(thread) || isExpiredSidechat(thread) || thread.deletedAt !== null)
+            return yield* new OrchestratorProjectionError({
+              threadId,
+              cause: "This thread is not a live side chat.",
+            });
+          yield* touchSidechatView(threadId);
+          sidechatViewCounts.set(threadId, (sidechatViewCounts.get(threadId) ?? 0) + 1);
+          yield* PubSub.publish(sidechatViewChanges, threadId);
+          return true;
+        }),
+      ),
+      (registered) =>
+        registered
+          ? threadDispatch.withLock(
+              threadId,
+              Effect.gen(function* () {
+                const remaining = Math.max(0, (sidechatViewCounts.get(threadId) ?? 0) - 1);
+                if (remaining === 0) sidechatViewCounts.delete(threadId);
+                else sidechatViewCounts.set(threadId, remaining);
+                yield* touchSidechatView(threadId);
+              }).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("Failed to persist side-chat view activity", {
+                    threadId,
+                    cause,
+                  }),
+                ),
+                Effect.ensuring(PubSub.publish(sidechatViewChanges, threadId)),
+              ),
+            )
+          : Effect.void,
+    );
   });
 
   const handleRunUpdate = Effect.fn("Orchestrator.handleRunUpdate")(
@@ -12172,6 +12487,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     new OrchestratorProjectionError({ threadId: ThreadId.make("thread:shell"), cause });
 
   return OrchestratorV2.of({
+    acquireSidechatView,
+    getViewedSidechatIds: Effect.sync(() => Array.from(sidechatViewCounts.keys())),
+    streamSidechatViewChanges: Stream.fromPubSub(sidechatViewChanges),
     resumeQueuedRuns,
     recoverDelegatedTasks,
     recoverDelegatedTask,
@@ -12340,6 +12658,9 @@ export const layer: Layer.Layer<
 const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
   OrchestratorV2,
   OrchestratorV2.of({
+    acquireSidechatView: () => Effect.void,
+    getViewedSidechatIds: Effect.succeed([]),
+    streamSidechatViewChanges: Stream.empty,
     resumeQueuedRuns: Effect.fail(
       new OrchestratorDispatchError({
         commandId: CommandId.make("command:system:resume-queued-runs"),

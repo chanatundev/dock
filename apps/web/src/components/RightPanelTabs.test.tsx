@@ -1,8 +1,9 @@
-import { EnvironmentId, type ThreadPullRequestLink } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type ThreadPullRequestLink } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   resolvePullRequestTabLink,
+  sidechatTabTitle,
   surfaceShortcutActionForKey,
   surfaceShortcutTargetsTypingContext,
 } from "./RightPanelTabs";
@@ -96,5 +97,24 @@ describe("pull request tab snapshots", () => {
         link,
       ),
     ).toBe(newer);
+  });
+});
+
+describe("sidechat tab titles", () => {
+  const surface = {
+    id: 'sidechat:["local","child"]' as const,
+    kind: "sidechat" as const,
+    environmentId: EnvironmentId.make("local"),
+    threadId: ThreadId.make("child"),
+  };
+
+  it("uses the matching scoped shell title and falls back when unavailable", () => {
+    expect(
+      sidechatTabTitle(surface, [
+        { environmentId: EnvironmentId.make("remote"), id: surface.threadId, title: "Wrong" },
+        { environmentId: surface.environmentId, id: surface.threadId, title: "Child task" },
+      ]),
+    ).toBe("Child task");
+    expect(sidechatTabTitle(surface, [])).toBe("Sidechat");
   });
 });

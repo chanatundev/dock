@@ -1,4 +1,4 @@
-import { OrchestrationMessageContext } from "./composerContext.ts";
+import { GitHubIssueContextRecord, OrchestrationMessageContext } from "./composerContext.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaAST from "effect/SchemaAST";
@@ -36,7 +36,7 @@ import {
   TrimmedNonEmptyString,
   TurnItemId,
 } from "./baseSchemas.ts";
-import { ChatAttachment } from "./chatAttachment.ts";
+import { ChatAttachment, ChatAttachmentId } from "./chatAttachment.ts";
 import {
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetFullThreadDiffResult,
@@ -73,6 +73,7 @@ import {
   ToolActivitySource,
 } from "./providerRuntime.ts";
 import { ThreadTokenUsageSnapshot } from "./providerRuntime.ts";
+import { SidechatSource, SidechatLaunchSource, SidechatThreadFields } from "./sidechat.ts";
 
 export const OrchestrationV2Actor = Schema.Literals(["user", "agent", "system"]);
 export type OrchestrationV2Actor = typeof OrchestrationV2Actor.Type;
@@ -372,6 +373,7 @@ export type OrchestrationV2LimitRecoveryUpdate = typeof OrchestrationV2LimitReco
 
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
+  ...SidechatThreadFields,
   id: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
@@ -1579,6 +1581,30 @@ export const OrchestrationV2ProjectedTurnItem = Schema.Struct({
 });
 export type OrchestrationV2ProjectedTurnItem = typeof OrchestrationV2ProjectedTurnItem.Type;
 
+export const SidechatSnapshotAsset = Schema.Struct({
+  sourceAttachmentId: ChatAttachmentId,
+  name: Schema.optionalKey(Schema.String),
+  // A missing historical source remains visible without inventing an owned file.
+  attachment: Schema.NullOr(ChatAttachment),
+});
+export type SidechatSnapshotAsset = typeof SidechatSnapshotAsset.Type;
+
+export const OrchestrationV2SidechatSnapshot = Schema.Struct({
+  source: SidechatSource,
+  items: Schema.Array(OrchestrationV2TurnItem),
+  referenceText: Schema.String,
+  issueContext: Schema.optionalKey(GitHubIssueContextRecord),
+  assets: Schema.optionalKey(Schema.Array(SidechatSnapshotAsset)),
+});
+export type OrchestrationV2SidechatSnapshot = typeof OrchestrationV2SidechatSnapshot.Type;
+
+const SidechatCaptureFields = {
+  source: SidechatSource,
+  itemCount: NonNegativeInt,
+  // Full context is read on demand, never streamed to every connected client.
+  snapshot: Schema.optional(OrchestrationV2SidechatSnapshot),
+};
+
 export const OrchestrationV2RawProviderEvent = Schema.Struct({
   id: RawEventId,
   driver: ProviderDriverKind,
@@ -1606,6 +1632,11 @@ const OrchestrationV2EventBase = Schema.Struct({
 });
 
 export const OrchestrationV2DomainEvent = Schema.Union([
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("sidechat.context-captured"),
+    payload: Schema.Struct(SidechatCaptureFields),
+  }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("thread.created"),
@@ -1813,6 +1844,7 @@ export type OrchestrationV2LatestVisibleMessageSummary =
 
 export const OrchestrationV2ThreadShell = Schema.Struct({
   ...OrchestrationV2CreationFields,
+  ...SidechatThreadFields,
   id: ThreadId,
   projectId: ProjectId,
   title: Schema.String,
@@ -2310,6 +2342,11 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
 ]);
 export type OrchestrationV2TurnItemJson = typeof OrchestrationV2TurnItemJson.Type;
 
+export const OrchestrationV2SidechatSnapshotJson = OrchestrationV2SidechatSnapshot.mapFields(
+  (fields) => ({ ...fields, items: Schema.Array(OrchestrationV2TurnItemJson) }),
+);
+export type OrchestrationV2SidechatSnapshotJson = typeof OrchestrationV2SidechatSnapshotJson.Type;
+
 export const OrchestrationV2ProjectedTurnItemJson = OrchestrationV2ProjectedTurnItem.mapFields(
   (fields) => ({
     ...fields,
@@ -2420,6 +2457,14 @@ export const OrchestrationV2RawProviderEventJson = OrchestrationV2RawProviderEve
 export type OrchestrationV2RawProviderEventJson = typeof OrchestrationV2RawProviderEventJson.Type;
 
 export const OrchestrationV2DomainEventJson = Schema.Union([
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("sidechat.context-captured"),
+    payload: Schema.Struct({
+      ...SidechatCaptureFields,
+      snapshot: Schema.optional(OrchestrationV2SidechatSnapshotJson),
+    }),
+  }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("thread.created"),
@@ -2595,6 +2640,7 @@ export const OrchestrationV2Command = Schema.Union([
     interactionMode: ProviderInteractionMode,
     branch: Schema.NullOr(TrimmedNonEmptyString),
     worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+    sidechat: Schema.optionalKey(SidechatLaunchSource),
     importedNativeThread: Schema.optional(
       Schema.Struct({
         ref: Schema.Struct({
@@ -3032,6 +3078,18 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  */
 const OrchestrationV2InternalCommand = Schema.Union([
   Schema.Struct({
+    type: Schema.Literal("thread.sidechat.activity.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    activityAt: IsoDateTime,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.sidechat.expire"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    expectedLastActivityAt: IsoDateTime,
+  }),
+  Schema.Struct({
     type: Schema.Literal("thread.pull-request-watch.sync"),
     commandId: CommandId,
     threadId: ThreadId,
@@ -3187,6 +3245,7 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  sidechat: Schema.optionalKey(SidechatLaunchSource),
   initialMessage: Schema.optional(
     Schema.Struct({
       messageId: Schema.optional(MessageId),

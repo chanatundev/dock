@@ -4,6 +4,7 @@ import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { isElectron } from "../env";
+import { openCommandPalette } from "../commandPaletteBus";
 import { NoProjectsHero } from "../components/NoProjectsHero";
 import { sortScopedProjectsForSidebar } from "../components/Sidebar.logic";
 import { Button } from "../components/ui/button";
@@ -22,6 +23,7 @@ import { useEnvironments } from "../state/environments";
 
 function ChatIndexRouteView() {
   const { authGateState } = Route.useRouteContext();
+  const { dockTabsClosed } = Route.useSearch();
   const { environments, isReady } = useEnvironments();
 
   if (authGateState.status === "hosted-static") {
@@ -29,7 +31,26 @@ function ChatIndexRouteView() {
     if (environments.length === 0) return <HostedEmptyState />;
   }
 
-  return <IndexDraftLanding />;
+  return dockTabsClosed ? <ClosedViews /> : <IndexDraftLanding />;
+}
+
+function ClosedViews() {
+  return (
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
+      <WorkspacePageHeader electron={isElectron} />
+      <Empty className="flex-1">
+        <EmptyHeader>
+          <EmptyTitle>No open views</EmptyTitle>
+          <EmptyDescription>Open a thread from the sidebar or start a new one.</EmptyDescription>
+          <div className="mt-5 flex justify-center">
+            <Button onClick={() => openCommandPalette({ open: "new-thread-in" })}>
+              New thread
+            </Button>
+          </div>
+        </EmptyHeader>
+      </Empty>
+    </SidebarInset>
+  );
 }
 
 function IndexDraftLanding() {
@@ -108,5 +129,7 @@ function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
 }
 
 export const Route = createFileRoute("/_chat/")({
+  validateSearch: (search: Record<string, unknown>): { dockTabsClosed?: boolean } =>
+    search.dockTabsClosed === true ? { dockTabsClosed: true } : {},
   component: ChatIndexRouteView,
 });

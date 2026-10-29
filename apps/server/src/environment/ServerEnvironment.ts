@@ -216,6 +216,12 @@ export const make = Effect.gen(function* () {
     serverVersion: packageJson.version,
     orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
     capabilities: {
+      dockSpaces: true,
+      dockSidechatViews: true,
+      dockSidechatContext: true,
+      dockSidechatOperations: true,
+      dockTasks: true,
+      dockInboxRecap: true,
       repositoryIdentity: true,
       connectionProbe: true,
       attachmentUploads: true,

@@ -36,6 +36,11 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
   }
   return (
     <RightPanelSheet
+      fullWidthOnNarrow={tabs.surfaces.some(
+        (surface) =>
+          surface.id === tabs.activeSurfaceId &&
+          (surface.kind === "sidechat" || surface.kind === "sidechat-tool"),
+      )}
       animationDurationMs={sheetAnimationDurationMs}
       open={tabs.open === true}
       onClose={onCloseSheet}

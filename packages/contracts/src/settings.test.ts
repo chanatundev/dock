@@ -25,6 +25,7 @@ const encodeClientSettings = Schema.encodeSync(ClientSettingsSchema);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
+const encodeServerSettingsPatch = Schema.encodeSync(ServerSettingsPatch);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
 describe("storage cleanup settings", () => {
@@ -98,6 +99,40 @@ describe("storage cleanup settings", () => {
     expect(() =>
       decodeServerSettingsPatch({ storageCleanup: { worktreeKeepWhen: "unknown" } }),
     ).toThrow();
+  });
+});
+
+describe("ServerSettings sidechat expiry", () => {
+  it("defaults legacy environment settings to one hour", () => {
+    const settings = decodeServerSettings({});
+
+    expect(DEFAULT_SERVER_SETTINGS.sidechatExpiry).toBe("1h");
+    expect(settings.sidechatExpiry).toBe("1h");
+    expect(encodeServerSettings(settings).sidechatExpiry).toBe("1h");
+  });
+
+  it.each(["1h", "24h", "never"] as const)(
+    "round-trips %s through environment settings and patches",
+    (sidechatExpiry) => {
+      const settings = decodeServerSettings({ sidechatExpiry });
+      const patch = decodeServerSettingsPatch({ sidechatExpiry });
+
+      expect(settings.sidechatExpiry).toBe(sidechatExpiry);
+      expect(encodeServerSettings(settings).sidechatExpiry).toBe(sidechatExpiry);
+      expect(patch).toEqual({ sidechatExpiry });
+      expect(encodeServerSettingsPatch(patch)).toEqual({ sidechatExpiry });
+    },
+  );
+
+  it("rejects unsupported expiry values in environment settings and patches", () => {
+    expect(() => decodeServerSettings({ sidechatExpiry: "2h" })).toThrow();
+    expect(() => decodeServerSettingsPatch({ sidechatExpiry: "2h" })).toThrow();
+  });
+
+  it("keeps sidechat expiry out of client setting patches", () => {
+    expect(decodeClientSettingsPatch({ sidechatExpiry: "24h" })).not.toHaveProperty(
+      "sidechatExpiry",
+    );
   });
 });
 

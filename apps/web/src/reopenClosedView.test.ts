@@ -40,6 +40,30 @@ beforeEach(() => {
 });
 
 describe("reopenClosedView", () => {
+  it("reopens a side-chat view under its host without creating or starting a conversation", async () => {
+    const child = {
+      environmentId: threadRef.environmentId,
+      threadId: "side-child" as ScopedThreadRef["threadId"],
+    };
+    useRightPanelStore.getState().openSidechat(threadRef, child);
+    const surface = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      threadRef,
+    ).surfaces[0]!;
+    if (surface.kind !== "sidechat") throw new Error("Expected a side-chat view");
+    useRightPanelStore.getState().closeSurface(threadRef, surface.id);
+    const openPreview = vi.fn();
+    expect(
+      await reopenClosedView(
+        { kind: "panel-tab", threadRef, surface },
+        { openPreview, workspaceAvailable: false },
+      ),
+    ).toBe(true);
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef).surfaces,
+    ).toEqual([surface]);
+    expect(openPreview).not.toHaveBeenCalled();
+  });
   it("restores a file tab at its line without creating a browser session", async () => {
     const openPreview = vi.fn();
     const reopened = await reopenClosedView(

@@ -1,3 +1,4 @@
+import { SidechatSurface } from "./SidechatSurface";
 import { APP_BASE_NAME } from "~/branding";
 import type {
   EditorId,
@@ -10,7 +11,7 @@ import type {
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
 import type { ComposerImageAttachment, DraftId } from "../../composerDraftStore";
 import type { ShortcutMatchContext } from "../../keybindings";
 import { type RightPanelSurface, useRightPanelStore } from "../../rightPanelStore";
@@ -61,6 +62,10 @@ export interface RightPanelFileProps {
 /** The body of the thread's right panel for the surface it is showing. */
 export function RightPanelSurfaceContent(props: {
   readonly surface: RightPanelSurface | null;
+  readonly renderSidechatContent: (
+    childRef: ScopedThreadRef,
+    toolId: string | undefined,
+  ) => ReactNode;
   readonly activeSurfaceId: string | null;
   readonly threadRef: ScopedThreadRef;
   readonly environmentId: EnvironmentId;
@@ -82,6 +87,15 @@ export function RightPanelSurfaceContent(props: {
   const { surface, threadRef, visible } = props;
   if (surface === null) return null;
   switch (surface.kind) {
+    case "sidechat":
+    case "sidechat-tool":
+      return (
+        <SidechatSurface
+          hostRef={threadRef}
+          surface={surface}
+          renderConversation={props.renderSidechatContent}
+        />
+      );
     case "preview":
       return (
         <Suspense fallback={null}>

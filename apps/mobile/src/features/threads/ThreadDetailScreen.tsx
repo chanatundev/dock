@@ -1,4 +1,5 @@
 import { useSidebarWorkspaceTabs } from "../workspace/useSystemWorkspaceTabBar";
+import { AppText } from "../../components/ui/AppText";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -174,6 +175,8 @@ import { useThreadQueuedCount } from "./ThreadQueueControl";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
+import { isSidechatThread } from "@t3tools/shared/sidechatThread";
+import { useSidechatViewLease } from "./useSidechatViewLease";
 
 export interface ThreadDetailScreenProps {
   readonly header?: React.ReactNode;
@@ -454,6 +457,10 @@ function ThreadVisitWatermark(props: {
 }
 
 export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetailScreenProps) {
+  const sidechat = isSidechatThread(props.selectedThread);
+  const sidechatExpired = props.selectedThread.sidechatExpiredAt != null;
+  const canOperateThread = props.canOperateThread && !sidechatExpired;
+  useSidechatViewLease(props.environmentId, props.selectedThread.id, sidechat && !sidechatExpired);
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const navigation = useNavigation();
   const { session: voiceInputSession } = useGlobalVoiceInput();
@@ -531,6 +538,10 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     threadId: props.selectedThread.id,
   });
   const composerError = useAtomValue(threadComposerErrorsAtom)[selectedThreadKey]?.message ?? null;
+  const expiredDraft =
+    sidechatExpired && props.composerDraftKey !== null
+      ? getComposerDraftSnapshot(props.composerDraftKey)
+      : null;
   const queuedCount = useThreadQueuedCount(props.selectedThreadDetailRef);
   const turnSubagents = useThreadTurnSubagents(props.selectedThreadDetailRef);
   const agentsSegment = resolveSubagentPillSegment(turnSubagents);
@@ -630,7 +641,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     latestRunCompletedAt: props.selectedThread.latestRun?.completedAt ?? null,
   });
   const runStatusAction = async (action: "stop" | "wake" | "unsettle" | "dismiss") => {
-    if (statusPending || !props.canOperateThread) return;
+    if (statusPending || !canOperateThread) return;
     const request = { threadKey: selectedThreadKey };
     setStatusRequest(request);
     const target = {
@@ -746,7 +757,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
         action: {
           label: statusPending ? "Stopping..." : "Stop",
           accessibilityLabel: "Stop background work",
-          disabled: !props.canOperateThread || statusPending,
+          disabled: !canOperateThread || statusPending,
           onPress: () => void runStatusAction("stop"),
         },
       };
@@ -773,7 +784,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                 : "Dismissing..."
             : actionLabel,
           accessibilityLabel: actionLabel,
-          disabled: !props.canOperateThread || statusPending,
+          disabled: !canOperateThread || statusPending,
           onPress: () => void runStatusAction(snoozed ? "wake" : settled ? "unsettle" : "dismiss"),
         },
       };
@@ -790,16 +801,17 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   })();
   const showWorkingControl = floatingStatus !== null;
   const showFloatingStatus =
-    showWorkingControl ||
-    queuedCount > 0 ||
-    agentsSegment !== null ||
-    devicePreviews.length > 0 ||
-    browserTabs.tabs.length > 0 ||
-    props.connectionStateLabel !== "connected" ||
-    props.queuedMessages.length > 0 ||
-    props.selectedThreadFeed.some(
-      (entry) => "acknowledged" in entry && entry.acknowledged === true,
-    );
+    !sidechatExpired &&
+    (showWorkingControl ||
+      queuedCount > 0 ||
+      agentsSegment !== null ||
+      devicePreviews.length > 0 ||
+      browserTabs.tabs.length > 0 ||
+      props.connectionStateLabel !== "connected" ||
+      props.queuedMessages.length > 0 ||
+      props.selectedThreadFeed.some(
+        (entry) => "acknowledged" in entry && entry.acknowledged === true,
+      ));
   const selectedThreadFeed = props.selectedThreadFeed;
   const hasCompactableConversation =
     selectedThreadFeed.some(
@@ -880,7 +892,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     navigationHeaderHeight,
     composerOverlapHeight: composerBottomInset,
   });
-  const estimatedOverlayHeight = composerOverlapHeight;
+  const estimatedOverlayHeight = sidechatExpired ? 0 : composerOverlapHeight;
   // The overlay's measured height includes the home-indicator inset (the
   // composer pads it), but contentInsetAdjustmentBehavior="automatic" makes
   // UIKit add the safe-area bottom to the content inset AGAIN — leaving a
@@ -1438,7 +1450,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
         />
       ) : null}
 
-      {showContent ? (
+      {showContent && !sidechatExpired ? (
         <KeyboardStickyView
           // Waiting for a visibility render misses the first keyboard frames.
           enabled={Platform.OS === "ios" || !keyboardStateSuspect}
@@ -1589,7 +1601,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                     >
                       {props.activePendingApproval ? (
                         <PendingApprovalCard
-                          canOperateThread={props.canOperateThread}
+                          canOperateThread={canOperateThread}
                           approval={props.activePendingApproval}
                           respondingApprovalId={props.respondingApprovalId}
                           onRespond={props.onRespondToApproval}
@@ -1597,7 +1609,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                       ) : null}
                       {props.activePendingUserInput ? (
                         <PendingUserInputCard
-                          canOperateThread={props.canOperateThread}
+                          canOperateThread={canOperateThread}
                           pendingUserInput={props.activePendingUserInput}
                           maxHeight={pendingUserInputMaxHeight}
                           collapsed={userInputCollapsed}
@@ -1663,7 +1675,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                       {props.draftMode?.controls}
                       <ThreadComposer
                         isDraft={Boolean(props.draftMode)}
-                        canOperateThread={props.canOperateThread}
+                        canOperateThread={canOperateThread}
                         reportedModelSelection={reportedModelSelection}
                         editorRef={composerEditorRef}
                         placeholder={
@@ -1741,6 +1753,42 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
             </Animated.View>
           </ComposerPopoverHost>
         </KeyboardStickyView>
+      ) : null}
+      {showContent && sidechatExpired ? (
+        <View
+          className="border-t border-border pt-3"
+          style={{ paddingBottom: composerBottomInset }}
+        >
+          <View className="gap-2 px-4">
+            <AppText className="text-center text-sm text-foreground-muted">
+              This side chat has expired. Its transcript is available to read.
+            </AppText>
+            {expiredDraft &&
+            (expiredDraft.text.length > 0 || expiredDraft.attachments.length > 0) ? (
+              <View className="gap-1 border-t border-border pt-2">
+                <AppText className="text-xs font-medium text-foreground-muted">
+                  Unsent message
+                </AppText>
+                {expiredDraft.text.length > 0 ? (
+                  <AppText selectable className="text-sm">
+                    {expiredDraft.text}
+                  </AppText>
+                ) : null}
+                {expiredDraft.attachments.map((attachment) => (
+                  <AppText key={attachment.id} selectable className="text-xs text-foreground-muted">
+                    Attachment: {attachment.name}
+                  </AppText>
+                ))}
+              </View>
+            ) : null}
+          </View>
+          {composerError !== null ? (
+            <ComposerErrorNotice
+              message={composerError}
+              onDismiss={() => clearThreadComposerError(selectedThreadKey)}
+            />
+          ) : null}
+        </View>
       ) : null}
     </View>
   );

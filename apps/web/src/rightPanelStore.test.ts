@@ -18,6 +18,10 @@ import {
 const refA = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-A"));
 const refB = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-B"));
 
+function openSidechat(hostRef: typeof refA, childRef: typeof refA) {
+  useRightPanelStore.getState().openSidechat(hostRef, childRef);
+}
+
 beforeEach(() => {
   useClosedViewStore.setState({ entries: [] });
   useRightPanelStore.setState({
@@ -39,6 +43,183 @@ async function reloadRightPanelStore() {
 }
 
 describe("rightPanelStore", () => {
+  it("sanitizes child tool refs during current-version hydration", async () => {
+    const { name, storage, version } = useRightPanelStore.persist.getOptions();
+    await storage!.setItem(name!, {
+      ...(version === undefined ? {} : { version }),
+      state: {
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "sidechat-tool:wrong-id",
+            surfaces: [
+              {
+                id: "sidechat-tool:wrong-id",
+                kind: "sidechat-tool",
+                environmentId: "env-1",
+                threadId: "thread-B",
+                surfaceId: "files",
+                toolKind: "files",
+              },
+            ],
+          },
+        },
+      },
+    });
+    await useRightPanelStore.persist.rehydrate();
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toEqual([]);
+  });
+
+  it("keeps sibling tool tabs bound to the child environment and original surface", () => {
+    const store = useRightPanelStore.getState();
+    store.openSidechat(refA, refB);
+    store.open(refB, "files");
+    const source = selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refB)!;
+    store.openSidechatTool(refA, refB, source);
+    const hosted = selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA);
+    expect(hosted).toMatchObject({
+      kind: "sidechat-tool",
+      environmentId: refB.environmentId,
+      threadId: refB.threadId,
+      surfaceId: "files",
+      toolKind: "files",
+    });
+    const otherChild = scopeThreadRef("env:other" as EnvironmentId, refB.threadId);
+    store.openSidechatTool(refA, otherChild, source);
+    const tools = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      refA,
+    ).surfaces.filter((surface) => surface.kind === "sidechat-tool");
+    expect(new Set(tools.map((surface) => surface.id)).size).toBe(2);
+    store.closeSurface(refA, hosted!.id);
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refB)?.id).toBe(
+      "files",
+    );
+  });
+
+  it("sanitizes restored sidechat refs and drops invalid or mismatched refs", () => {
+    const id = `sidechat:${JSON.stringify(["env:one/branch", "thread:one/branch"])}`;
+    const migrated = migratePersistedRightPanelState({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: id,
+          surfaces: [
+            {
+              id,
+              kind: "sidechat",
+              environmentId: " env:one/branch ",
+              threadId: " thread:one/branch ",
+              ignored: "discarded",
+            },
+            {
+              id: "sidechat:wrong-id",
+              kind: "sidechat",
+              environmentId: "env-2",
+              threadId: "thread-2",
+            },
+            {
+              id: "sidechat:empty-environment",
+              kind: "sidechat",
+              environmentId: "  ",
+              threadId: "thread-3",
+            },
+            { id: "sidechat:missing-thread", kind: "sidechat", environmentId: "env-4" },
+          ],
+        },
+      },
+    });
+
+    expect(selectThreadRightPanelState(migrated.byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: id,
+      surfaces: [
+        {
+          id,
+          kind: "sidechat",
+          environmentId: "env:one/branch",
+          threadId: "thread:one/branch",
+        },
+      ],
+    });
+  });
+
+  it("uses tuple-safe sidechat ids for scoped refs containing colons or slashes", () => {
+    const children = [
+      scopeThreadRef("env:part" as EnvironmentId, ThreadId.make("thread")),
+      scopeThreadRef("env" as EnvironmentId, ThreadId.make("part:thread")),
+      scopeThreadRef("env/part" as EnvironmentId, ThreadId.make("thread")),
+      scopeThreadRef("env" as EnvironmentId, ThreadId.make("part/thread")),
+    ];
+
+    for (const child of children) openSidechat(refA, child);
+
+    const surfaces = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      refA,
+    ).surfaces;
+    expect(surfaces).toHaveLength(children.length);
+    expect(new Set(surfaces.map((surface) => surface.id)).size).toBe(children.length);
+  });
+
+  it("reopens sidechats in place and closes only the host panel tab", () => {
+    const secondChild = scopeThreadRef("env-2" as EnvironmentId, ThreadId.make("thread-C"));
+    const firstId = `sidechat:${JSON.stringify([refB.environmentId, refB.threadId])}`;
+    const secondId = `sidechat:${JSON.stringify([secondChild.environmentId, secondChild.threadId])}`;
+    const store = useRightPanelStore.getState();
+
+    openSidechat(refA, refB);
+    openSidechat(refA, secondChild);
+    openSidechat(refA, refB);
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: firstId,
+      surfaces: [
+        {
+          id: firstId,
+          kind: "sidechat",
+          environmentId: refB.environmentId,
+          threadId: refB.threadId,
+        },
+        {
+          id: secondId,
+          kind: "sidechat",
+          environmentId: secondChild.environmentId,
+          threadId: secondChild.threadId,
+        },
+      ],
+    });
+
+    store.moveSurface(refA, firstId, 1);
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.map(
+        (surface) => surface.id,
+      ),
+    ).toEqual([secondId, firstId]);
+    store.closeSurface(refA, firstId);
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: secondId,
+      surfaces: [
+        {
+          id: secondId,
+          kind: "sidechat",
+          environmentId: secondChild.environmentId,
+          threadId: secondChild.threadId,
+        },
+      ],
+    });
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB).surfaces,
+    ).toEqual([]);
+    expect(useClosedViewStore.getState().entries).toMatchObject([
+      { kind: "panel-tab", threadRef: refA, surface: { id: firstId, kind: "sidechat" } },
+    ]);
+  });
+
   it("records single and bulk tab closes, newest first", () => {
     const store = useRightPanelStore.getState();
     const pr = pullRequestSurface({

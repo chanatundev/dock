@@ -3,11 +3,14 @@ import * as Schema from "effect/Schema";
 import {
   EnvironmentId,
   ForwardCompatibleArray,
+  IsoDateTime,
   NonNegativeInt,
   PositiveInt,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { GitHubIssueRef, GitHubIssueState } from "./githubIssues.ts";
+import { PullRequestComment } from "./pullRequest.ts";
 
 /**
  * Bytes never live here: image and file records bind to a `ChatAttachment` by id.
@@ -20,6 +23,7 @@ export const COMPOSER_CONTEXT_KINDS = [
   "element",
   "preview-annotation",
   "review-comment",
+  "github-issue",
   "mention",
   "skill",
   "thread",
@@ -77,6 +81,41 @@ export const PullRequestContextMetadata = Schema.Struct({
   isDraft: Schema.Boolean,
 });
 export type PullRequestContextMetadata = typeof PullRequestContextMetadata.Type;
+
+export const GitHubIssueContextComment = Schema.Struct({
+  id: PullRequestComment.fields.id,
+  author: PullRequestComment.fields.author,
+  url: PullRequestComment.fields.url,
+  createdAt: PullRequestComment.fields.createdAt,
+  body: Schema.String.check(Schema.isMaxLength(1_500)),
+  bodyTruncated: Schema.Boolean,
+});
+export type GitHubIssueContextComment = typeof GitHubIssueContextComment.Type;
+
+const githubIssueContextSnapshotFields = {
+  environmentId: EnvironmentId,
+  ...GitHubIssueRef.fields,
+  url: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString.check(Schema.isMaxLength(2_048)),
+  state: GitHubIssueState,
+  sourceUpdatedAt: IsoDateTime,
+  capturedAt: IsoDateTime,
+  body: Schema.String.check(Schema.isMaxLength(6_000)),
+  bodyTruncated: Schema.Boolean,
+  comments: Schema.Array(GitHubIssueContextComment).check(Schema.isMaxLength(12)),
+  totalComments: NonNegativeInt,
+  omittedComments: NonNegativeInt,
+} as const;
+const githubIssueContextCommentCountMatches = (snapshot: {
+  comments: ReadonlyArray<unknown>;
+  totalComments: number;
+  omittedComments: number;
+}) => snapshot.comments.length + snapshot.omittedComments === snapshot.totalComments;
+
+export const GitHubIssueContextSnapshot = Schema.Struct(githubIssueContextSnapshotFields).check(
+  Schema.makeFilter(githubIssueContextCommentCountMatches),
+);
+export type GitHubIssueContextSnapshot = typeof GitHubIssueContextSnapshot.Type;
 
 const recordBase = {
   version: Schema.Literal(1),
@@ -213,6 +252,13 @@ export const ThreadContextRecord = Schema.Struct({
 });
 export type ThreadContextRecord = typeof ThreadContextRecord.Type;
 
+export const GitHubIssueContextRecord = Schema.Struct({
+  ...recordBase,
+  kind: Schema.Literal("github-issue"),
+  ...githubIssueContextSnapshotFields,
+}).check(Schema.makeFilter(githubIssueContextCommentCountMatches));
+export type GitHubIssueContextRecord = typeof GitHubIssueContextRecord.Type;
+
 const isJson = Schema.is(Schema.Json);
 
 /**
@@ -243,6 +289,7 @@ export const KnownComposerContextRecord = Schema.Union([
   ElementContextRecord,
   PreviewAnnotationContextRecord,
   ReviewCommentContextRecord,
+  GitHubIssueContextRecord,
   MentionContextRecord,
   SkillContextRecord,
   ThreadContextRecord,

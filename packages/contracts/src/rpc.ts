@@ -4,6 +4,36 @@ import {
   OrchestrationV2SearchThreadResult,
 } from "./orchestrationV2.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
+import { InboxRecap, InboxRecapInput, InboxRecapError } from "./inboxRecap.ts";
+import {
+  SidechatReadContextInput,
+  SidechatReadContextResult,
+  SidechatContextError,
+} from "./sidechatContext.ts";
+import {
+  SidechatOpenInput,
+  SidechatOpenResult,
+  SidechatSendToParentInput,
+  SidechatSendToParentResult,
+  SidechatOperationError,
+} from "./sidechat.ts";
+import {
+  DockTask,
+  DockTaskError,
+  TaskCommand,
+  TaskReadInput,
+  TaskHistoryInput,
+  TaskHistoryResult,
+  TaskMutationResult,
+} from "./tasks.ts";
+import { TaskSummariesSnapshot, TaskSummariesStreamItem } from "./taskSummary.ts";
+import {
+  SpaceCommand,
+  SpaceError,
+  SpaceMutationResult,
+  SpacesSnapshot,
+  SpacesStreamItem,
+} from "./spaces.ts";
 import {
   McpAppCallToolInput,
   McpAppCallToolResult,
@@ -25,7 +55,7 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   CodexAuthCallbackInput,
   CodexAuthCallbackState,
@@ -511,6 +541,19 @@ export const WS_METHODS = {
   serverRefreshUsageRates: "server.refreshUsageRates",
 
   scheduledTasksList: "scheduledTasks.list",
+  spacesList: "spaces.list",
+  inboxReadRecap: "inbox.readRecap",
+  sidechatView: "sidechat.view",
+  sidechatReadContext: "sidechat.readContext",
+  sidechatOpen: "sidechat.open",
+  sidechatSendToParent: "sidechat.sendToParent",
+  spacesSubscribe: "spaces.subscribe",
+  spacesDispatch: "spaces.dispatch",
+  tasksList: "tasks.list",
+  tasksGet: "tasks.get",
+  tasksHistory: "tasks.history",
+  tasksSubscribe: "tasks.subscribe",
+  tasksDispatch: "tasks.dispatch",
   scheduledTasksSubscribe: "scheduledTasks.subscribe",
   scheduledTasksUpsert: "scheduledTasks.upsert",
   scheduledTasksSetEnabled: "scheduledTasks.setEnabled",
@@ -1790,6 +1833,81 @@ const WsScheduledTasksListRpc = Rpc.make(WS_METHODS.scheduledTasksList, {
   error: Schema.Union([ScheduledTaskError, EnvironmentAuthorizationError]),
 });
 
+const WsSpacesListRpc = Rpc.make(WS_METHODS.spacesList, {
+  payload: Schema.Struct({}),
+  success: SpacesSnapshot,
+  error: Schema.Union([SpaceError, EnvironmentAuthorizationError]),
+});
+const WsInboxReadRecapRpc = Rpc.make(WS_METHODS.inboxReadRecap, {
+  payload: InboxRecapInput,
+  success: InboxRecap,
+  error: Schema.Union([InboxRecapError, EnvironmentAuthorizationError]),
+});
+
+const WsSidechatViewRpc = Rpc.make(WS_METHODS.sidechatView, {
+  payload: Schema.Struct({ threadId: ThreadId }),
+  success: Schema.Struct({ threadId: ThreadId }),
+  stream: true,
+  error: Schema.Union([OrchestrationV2GetThreadProjectionError, EnvironmentAuthorizationError]),
+});
+const WsSidechatReadContextRpc = Rpc.make(WS_METHODS.sidechatReadContext, {
+  payload: SidechatReadContextInput,
+  success: SidechatReadContextResult,
+  error: Schema.Union([SidechatContextError, EnvironmentAuthorizationError]),
+});
+const WsSidechatOpenRpc = Rpc.make(WS_METHODS.sidechatOpen, {
+  payload: SidechatOpenInput,
+  success: SidechatOpenResult,
+  error: Schema.Union([SidechatOperationError, EnvironmentAuthorizationError]),
+});
+const WsSidechatSendToParentRpc = Rpc.make(WS_METHODS.sidechatSendToParent, {
+  payload: SidechatSendToParentInput,
+  success: SidechatSendToParentResult,
+  error: Schema.Union([SidechatOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsTasksListRpc = Rpc.make(WS_METHODS.tasksList, {
+  payload: Schema.Struct({}),
+  success: TaskSummariesSnapshot,
+  error: Schema.Union([DockTaskError, EnvironmentAuthorizationError]),
+});
+const WsTasksGetRpc = Rpc.make(WS_METHODS.tasksGet, {
+  payload: TaskReadInput,
+  success: DockTask,
+  error: Schema.Union([DockTaskError, EnvironmentAuthorizationError]),
+});
+const WsTasksHistoryRpc = Rpc.make(WS_METHODS.tasksHistory, {
+  payload: TaskHistoryInput,
+  success: TaskHistoryResult,
+  error: Schema.Union([DockTaskError, EnvironmentAuthorizationError]),
+});
+const WsTasksSubscribeRpc = Rpc.make(WS_METHODS.tasksSubscribe, {
+  payload: Schema.Struct({}),
+  success: TaskSummariesStreamItem,
+  error: Schema.Union([DockTaskError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+const WsTasksDispatchRpc = Rpc.make(WS_METHODS.tasksDispatch, {
+  payload: Schema.Struct({
+    command: TaskCommand,
+    creationSource: Schema.optional(Schema.Literals(["web", "mobile"])),
+  }),
+  success: TaskMutationResult,
+  error: Schema.Union([DockTaskError, EnvironmentAuthorizationError]),
+});
+
+const WsSpacesSubscribeRpc = Rpc.make(WS_METHODS.spacesSubscribe, {
+  payload: Schema.Struct({}),
+  success: SpacesStreamItem,
+  error: Schema.Union([SpaceError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+const WsSpacesDispatchRpc = Rpc.make(WS_METHODS.spacesDispatch, {
+  payload: SpaceCommand,
+  success: SpaceMutationResult,
+  error: Schema.Union([SpaceError, EnvironmentAuthorizationError]),
+});
+
 const WsScheduledTasksSubscribeRpc = Rpc.make(WS_METHODS.scheduledTasksSubscribe, {
   payload: ScheduledTaskListInput,
   success: ScheduledTaskListResult,
@@ -1932,6 +2050,19 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRefreshUsageRatesRpc,
   WsServerSignalProcessRpc,
   WsScheduledTasksListRpc,
+  WsSpacesListRpc,
+  WsInboxReadRecapRpc,
+  WsSidechatViewRpc,
+  WsSidechatReadContextRpc,
+  WsSidechatOpenRpc,
+  WsSidechatSendToParentRpc,
+  WsSpacesSubscribeRpc,
+  WsSpacesDispatchRpc,
+  WsTasksListRpc,
+  WsTasksGetRpc,
+  WsTasksHistoryRpc,
+  WsTasksSubscribeRpc,
+  WsTasksDispatchRpc,
   WsScheduledTasksSubscribeRpc,
   WsScheduledTasksUpsertRpc,
   WsScheduledTasksSetEnabledRpc,

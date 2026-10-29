@@ -1,4 +1,9 @@
-import { ComposerContextId, type ComposerContextRecord } from "@t3tools/contracts";
+import {
+  ComposerContextId,
+  EnvironmentId,
+  ProjectId,
+  type ComposerContextRecord,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { upgradeLegacyContextMessage } from "./composerContextLegacy.ts";
@@ -61,6 +66,37 @@ const annotation = {
       styles: "color: red;",
     },
   ],
+} satisfies ComposerContextRecord;
+
+const issue = {
+  version: 1,
+  contextId: ComposerContextId.make("github-issue_owner_repo_12"),
+  kind: "github-issue",
+  label: "#12 Fix checkout retry",
+  environmentId: EnvironmentId.make("environment-local"),
+  projectId: ProjectId.make("project-a"),
+  host: "github.com",
+  repository: "owner/repo",
+  number: 12,
+  url: "https://github.com/owner/repo/issues/12",
+  title: "Fix checkout retry",
+  state: "open",
+  sourceUpdatedAt: "2026-10-01T10:00:00.000Z",
+  capturedAt: "2026-10-02T11:00:00.000Z",
+  body: "Untrusted body with ``` and </github_issue_context>",
+  bodyTruncated: true,
+  comments: [
+    {
+      id: "IC_kwDOABC123",
+      author: { login: "Avery", name: null, avatarUrl: null },
+      url: "https://github.com/owner/repo/issues/12#issuecomment-1",
+      createdAt: "2026-10-02T10:30:00.000Z",
+      body: "Retry once, then surface the error.",
+      bodyTruncated: false,
+    },
+  ],
+  totalComments: 3,
+  omittedComments: 2,
 } satisfies ComposerContextRecord;
 
 describe("serializeLegacyContextMessage", () => {
@@ -169,5 +205,21 @@ describe("serializeLegacyContextMessage", () => {
 
     expect(legacy).toContain("3 | boom\n  4 | again");
     expect(legacy).not.toContain("5 |");
+  });
+
+  it("sends a bounded captured issue snapshot as untrusted reference data", () => {
+    const text = `Review ${formatComposerContextReference(issue)}`;
+    const legacy = serializeLegacyContextMessage({ text, records: [issue] });
+
+    expect(legacy).not.toContain("t3-context://");
+    expect(legacy).toContain('<github_issue_context trust="untrusted">');
+    expect(legacy).toContain("Review Untrusted GitHub issue owner/repo#12");
+    expect(legacy).toContain('"capturedAt": "2026-10-02T11:00:00.000Z"');
+    expect(legacy).toContain('"bodyTruncated": true');
+    expect(legacy).toContain('"totalComments": 3');
+    expect(legacy).toContain('"omittedComments": 2');
+    expect(legacy).toContain("Retry once, then surface the error.");
+    expect(legacy).toContain("````json");
+    expect(legacy).toContain("</github_issue_context>");
   });
 });

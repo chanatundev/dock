@@ -16,6 +16,7 @@ import {
   EnvironmentId,
   ScheduledTaskId,
   WS_METHODS,
+  ORCHESTRATION_V2_WS_METHODS,
   type AuthSessionState,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -51,6 +52,23 @@ const runtime = Atom.runtime(
     run: (_id: EnvironmentId, effect: Effect.Effect<unknown>) => effect,
   } as unknown as EnvironmentRegistry["Service"]),
 );
+
+it.effect("requires the destination operate grant for side-chat open and parent return", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      registry.set(sessions(env), AsyncResult.success(grant(false)));
+      for (const method of [WS_METHODS.sidechatOpen, WS_METHODS.sidechatSendToParent]) {
+        const permission = createCommandPermissions(runtime, method);
+        const denied = yield* permission.authorize(registry, env).pipe(Effect.flip);
+        expect(denied.requiredPermission).toBe(AuthOrchestrationOperateScope);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        yield* permission.authorize(registry, env);
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+      }
+    }),
+  ),
+);
 const permissions = createCommandPermissions(runtime, WS_METHODS.scheduledTasksDelete);
 const setup = Effect.gen(function* () {
   const registry = AtomRegistry.make();
@@ -60,6 +78,51 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("authorizes Task mutations against the owning environment's current grant", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const tasks = createCommandPermissions(runtime, WS_METHODS.tasksDispatch);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        registry.set(sessions(other), AsyncResult.success(grant(false)));
+        expect(registry.get(tasks.permissionAtom(env))).toBe(true);
+        expect(registry.get(tasks.permissionAtom(other))).toBe(false);
+        yield* tasks.authorize(registry, env);
+        expect((yield* tasks.authorize(registry, other).pipe(Effect.flip)).requiredPermission).toBe(
+          AuthOrchestrationOperateScope,
+        );
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect((yield* tasks.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+      }),
+    ),
+  );
+  it.effect("uses each destination environment's grant for Space mutations", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        for (const method of [
+          WS_METHODS.spacesDispatch,
+          ORCHESTRATION_V2_WS_METHODS.launchThread,
+        ]) {
+          const spaces = createCommandPermissions(runtime, method);
+          registry.set(sessions(env), AsyncResult.success(grant(true)));
+          registry.set(sessions(other), AsyncResult.success(grant(false)));
+          expect(registry.get(spaces.permissionAtom(env))).toBe(true);
+          expect(registry.get(spaces.permissionAtom(other))).toBe(false);
+          yield* spaces.authorize(registry, env);
+          expect(
+            (yield* spaces.authorize(registry, other).pipe(Effect.flip)).requiredPermission,
+          ).toBe(AuthOrchestrationOperateScope);
+          registry.set(sessions(env), AsyncResult.success(grant(false)));
+          expect((yield* spaces.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+            "EnvironmentAuthorizationError",
+          );
+        }
+      }),
+    ),
+  );
   it.effect("requires the destination preview grant to close a browser tab", () =>
     Effect.scoped(
       Effect.gen(function* () {

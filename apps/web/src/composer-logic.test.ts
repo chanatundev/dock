@@ -585,3 +585,13 @@ describe("extendReplacementRangeForTrailingSpace", () => {
     expect(extendReplacementRangeForTrailingSpace("@fi", 3, "@file ")).toBe(3);
   });
 });
+
+it("recognizes side-chat commands without consuming Sidekick or other slash commands", async () => {
+  const { parseComposerSidechatCommand } = await import("./composer-logic");
+  expect(parseComposerSidechatCommand("/side")).toBe("");
+  expect(parseComposerSidechatCommand(" /SIDE explain this\nwith context ")).toBe(
+    "explain this\nwith context",
+  );
+  expect(parseComposerSidechatCommand("/sidekick")).toBeNull();
+  expect(parseComposerSidechatCommand("/sideshow")).toBeNull();
+});

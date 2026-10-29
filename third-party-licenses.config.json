@@ -1,6 +1,13 @@
 {
   "customNotices": [
     {
+      "bundles": ["desktop", "web", "mobile", "server"],
+      "license": "MIT",
+      "name": "Synara",
+      "noticeFile": "third-party-notices/synara/LICENSE",
+      "sourceUrl": "https://github.com/Emanuele-web04/synara/tree/29b11e105200c7bc6e2c71a06a375513d4c8a72d"
+    },
+    {
       "bundles": ["desktop", "web"],
       "license": "MIT",
       "name": "Ionic keyboard assist",

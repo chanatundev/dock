@@ -3,6 +3,18 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./inboxDay": {
+      "types": "./src/inboxDay.ts",
+      "import": "./src/inboxDay.ts"
+    },
+    "./sidechatThread": {
+      "types": "./src/sidechatThread.ts",
+      "import": "./src/sidechatThread.ts"
+    },
+    "./sidechatExpiry": {
+      "types": "./src/sidechatExpiry.ts",
+      "import": "./src/sidechatExpiry.ts"
+    },
     "./changedFileKind": {
       "types": "./src/changedFileKind.ts",
       "import": "./src/changedFileKind.ts"
@@ -10,6 +22,10 @@
     "./githubMarkdownLinks": {
       "types": "./src/githubMarkdownLinks.ts",
       "import": "./src/githubMarkdownLinks.ts"
+    },
+    "./githubIssueContext": {
+      "types": "./src/githubIssueContext.ts",
+      "import": "./src/githubIssueContext.ts"
     },
     "./authScopeOptions": {
       "types": "./src/authScopeOptions.ts",

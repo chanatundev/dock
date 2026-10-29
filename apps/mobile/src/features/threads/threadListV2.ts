@@ -146,7 +146,7 @@ export function threadHasUnseenCompletion(
   if (!completedAt) return false;
   const completedAtMs = Date.parse(completedAt);
   if (Number.isNaN(completedAtMs)) return false;
-  if (!thread.lastVisitedAt) return false;
+  if (!thread.lastVisitedAt) return true;
   const lastVisitedAtMs = Date.parse(thread.lastVisitedAt);
   if (Number.isNaN(lastVisitedAtMs)) return true;
   return completedAtMs > lastVisitedAtMs;

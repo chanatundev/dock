@@ -1,7 +1,10 @@
 import { pullRequestHostOf, type SourceControlProviderKind } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { appBrandCopy } from "~/branding";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { useProjects, useServerConfigs, useThreadShells } from "~/state/entities";
+import { useEnvironment } from "~/state/environments";
+import { SIDECHAT_TOOL_LABELS } from "~/sidechatTools.logic";
+import { useProjects, useServerConfigs, useThreadShell, useThreadShells } from "~/state/entities";
 import {
   threadPullRequestKeysEqual,
   visibleThreadPullRequests,
@@ -34,6 +37,7 @@ import {
   FileDiff,
   Files,
   Globe2,
+  MessageCircle,
   Plus,
   TerminalSquare,
 } from "lucide-react";
@@ -138,6 +142,7 @@ export interface RightPanelTabsProps {
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
+  onNewSidechat?: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -543,6 +548,20 @@ function RightPanelEmptyState(props: {
   );
 }
 
+export function sidechatTabTitle(
+  surface: Extract<RightPanelSurface, { kind: "sidechat" }>,
+  threadShells: readonly Pick<EnvironmentThreadShell, "environmentId" | "id" | "title">[],
+): string {
+  return (
+    threadShells
+      .find(
+        (thread) =>
+          thread.environmentId === surface.environmentId && thread.id === surface.threadId,
+      )
+      ?.title.trim() || "Sidechat"
+  );
+}
+
 function surfaceTitle(
   surface: RightPanelSurface,
   sessions: Readonly<Record<string, PreviewSessionSnapshot>>,
@@ -566,6 +585,10 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "pull-requests":
       return "Pull requests";
+    case "sidechat-tool":
+      return `${SIDECHAT_TOOL_LABELS[surface.toolKind]} · Side chat`;
+    case "sidechat":
+      return "Sidechat";
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
     case "preview": {
@@ -664,6 +687,9 @@ function SurfaceIcon({
       ) : (
         <Smartphone className="size-3 shrink-0" />
       );
+    case "sidechat-tool":
+    case "sidechat":
+      return <MessageCircle className="size-3 shrink-0" />;
   }
 }
 
@@ -831,7 +857,6 @@ function RightPanelTab(
 ) {
   const {
     surface,
-    title,
     audio,
     audioRuntimeTabId,
     onActivate,
@@ -841,6 +866,18 @@ function RightPanelTab(
     onStartRename,
     onFinishRename,
   } = props;
+  const sidechatShell = useThreadShell(
+    surface.kind === "sidechat" ? scopeThreadRef(surface.environmentId, surface.threadId) : null,
+  );
+  const toolEnvironment = useEnvironment(
+    surface.kind === "sidechat-tool" ? surface.environmentId : null,
+  );
+  const title =
+    surface.kind === "sidechat-tool"
+      ? `${SIDECHAT_TOOL_LABELS[surface.toolKind]} · ${toolEnvironment?.label ?? surface.environmentId}`
+      : surface.kind === "sidechat"
+        ? sidechatTabTitle(surface, sidechatShell ? [sidechatShell] : [])
+        : props.title;
   const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: surface.id,
     disabled: props.dragDisabled,
@@ -1386,6 +1423,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       </SurfaceMenuItem>
                     );
                   })}
+                  {props.onNewSidechat ? (
+                    <MenuItem onClick={props.onNewSidechat}>
+                      <MessageCircle />
+                      New side chat
+                    </MenuItem>
+                  ) : null}
                 </MenuPopup>
               </Menu>
             ) : null}

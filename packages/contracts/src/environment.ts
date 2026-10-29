@@ -72,6 +72,12 @@ export const ServerSelfUpdateCapability = Schema.Literals([
 export type ServerSelfUpdateCapability = typeof ServerSelfUpdateCapability.Type;
 
 export const ExecutionEnvironmentCapabilities = Schema.Struct({
+  dockSpaces: Schema.optionalKey(Schema.Boolean),
+  dockSidechatViews: Schema.optionalKey(Schema.Boolean),
+  dockSidechatContext: Schema.optionalKey(Schema.Boolean),
+  dockSidechatOperations: Schema.optionalKey(Schema.Boolean),
+  dockTasks: Schema.optionalKey(Schema.Boolean),
+  dockInboxRecap: Schema.optionalKey(Schema.Boolean),
   repositoryIdentity: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   connectionProbe: Schema.optionalKey(Schema.Boolean),
   attachmentUploads: Schema.optionalKey(Schema.Boolean),

@@ -14,8 +14,115 @@ import * as Layer from "effect/Layer";
 
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProjectionStore from "./ProjectionStore.ts";
 
-const layerTest = ContextHandoffService.layer.pipe(Layer.provide(IdAllocator.layer));
+const layerBase = ContextHandoffService.layer.pipe(Layer.provide(IdAllocator.layer));
+const layerTest = layerBase.pipe(
+  Layer.provide(
+    Layer.mock(ProjectionStore.ProjectionStoreV2)({
+      getSidechatSnapshot: () => Effect.succeed(null),
+    }),
+  ),
+);
+
+it.effect(
+  "retains the frozen reference in a full provider replacement handoff under the shared budget",
+  () =>
+    Effect.gen(function* () {
+      const service = yield* ContextHandoffService.ContextHandoffServiceV2;
+      const handoff = yield* service.prepareProviderHandoff({
+        threadId: ThreadId.make("side"),
+        targetRunId: RunId.make("replacement-run"),
+        transferId: null,
+        fromProviderThreadIds: [ProviderThreadId.make("old")],
+        toProviderThreadId: ProviderThreadId.make("new"),
+        fromProviderInstanceId: ProviderInstanceId.make("codex"),
+        toProviderInstanceId: ProviderInstanceId.make("claude"),
+        coveredRunOrdinals: { from: 1, to: 2 },
+        strategy: "full_thread_summary",
+        items: [
+          importedItem({
+            role: "user",
+            id: "side-question",
+            text: "Current side question",
+            ordinal: 0,
+          }),
+        ],
+        createdAt: DateTime.makeUnsafe("2026-10-26T12:00:00.000Z"),
+      });
+      assert.include(
+        handoff.history?.messages.map((message) => message.text) ?? [],
+        "Frozen parent answer",
+      );
+      assert.include(handoff.summaryText, "reference-only");
+      assert.include(
+        handoff.history?.messages.map((message) => message.text) ?? [],
+        "Current side question",
+      );
+    }).pipe(
+      Effect.provide(
+        layerBase.pipe(
+          Layer.provide(
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getSidechatSnapshot: () =>
+                Effect.succeed({
+                  source: {
+                    kind: "thread",
+                    threadId: ThreadId.make("parent"),
+                    snapshotSequence: 7,
+                    capturedAt: "2026-10-26T12:00:00.000Z",
+                  },
+                  referenceText: "",
+                  items: [
+                    importedItem({
+                      role: "assistant",
+                      id: "parent-answer",
+                      text: "Frozen parent answer",
+                      ordinal: 0,
+                    }),
+                  ],
+                }),
+            }),
+          ),
+        ),
+      ),
+    ),
+);
+
+it.effect(
+  "budgets frozen side-chat context without continuing the parent task or creating fork lineage",
+  () =>
+    Effect.gen(function* () {
+      const service = yield* ContextHandoffService.ContextHandoffServiceV2;
+      const partial = {
+        ...importedItem({ role: "assistant", id: "partial", text: "Frozen partial", ordinal: 0 }),
+        status: "running" as const,
+      };
+      const handoff = yield* service.prepareSidechat({
+        threadId: ThreadId.make("side"),
+        targetRunId: RunId.make("side-run"),
+        toProviderThreadId: ProviderThreadId.make("side-provider"),
+        toProviderInstanceId: ProviderInstanceId.make("codex"),
+        snapshot: {
+          source: {
+            kind: "thread",
+            threadId: partial.threadId,
+            snapshotSequence: 42,
+            capturedAt: "2026-10-26T12:00:00.000Z",
+          },
+          items: [partial],
+          referenceText: "",
+        },
+        createdAt: DateTime.makeUnsafe("2026-10-26T12:01:00.000Z"),
+      });
+      assert.equal(handoff.strategy, "manual_context");
+      assert.isNull(handoff.transferId);
+      assert.equal(handoff.history?.messages[0]?.text, "Frozen partial");
+      assert.include(handoff.history?.coverage ?? "", "reference-only");
+      assert.notInclude(handoff.summaryText, "Imported conversation history");
+      assert.equal(handoff.targetRunId, RunId.make("side-run"));
+    }).pipe(Effect.provide(layerTest)),
+);
 
 function importedItem(
   input:

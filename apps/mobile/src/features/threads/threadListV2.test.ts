@@ -75,6 +75,22 @@ describe("resolveThreadListV2SnoozeMenuSelection", () => {
 });
 
 describe("resolveThreadListV2Status", () => {
+  it("keeps never-opened completions unread until the environment visit watermark reaches them", () => {
+    const thread = presentThreadShell(
+      environmentId,
+      makeRawThreadShell({
+        latestRunId: RunId.make("run-unvisited-completion"),
+        status: "completed",
+        latestRunCompletedAt: DateTime.makeUnsafe(NOW),
+        lastVisitedAt: null,
+      }),
+    );
+    expect(threadHasUnseenCompletion(thread)).toBe(true);
+    expect(threadHasUnseenCompletion({ ...thread, lastVisitedAt: NOW })).toBe(false);
+    expect(
+      threadHasUnseenCompletion({ ...thread, lastVisitedAt: "2026-06-01T23:59:00.000Z" }),
+    ).toBe(true);
+  });
   it("presents decoded thread waits as Waiting while preserving requests and older servers", () => {
     const raw = makeRawThreadShell({
       status: "running",

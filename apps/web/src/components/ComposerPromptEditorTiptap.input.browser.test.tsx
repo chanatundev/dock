@@ -433,3 +433,12 @@ describe("an Arabic line", () => {
     );
   });
 });
+
+it("unmounts safely when its Tiptap view has already detached", async () => {
+  await using screen = await mountEditor("Keep this draft");
+  await act(async () => {
+    screen.editor.unmount();
+  });
+  await screen.unmount();
+  expect(document.querySelector(".tiptap")).toBeNull();
+});

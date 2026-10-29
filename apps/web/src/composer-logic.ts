@@ -18,7 +18,14 @@ import {
 import { resolveShortcutCommand, type ShortcutEventLike } from "./keybindings";
 
 export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
-export type ComposerSlashCommand = "model" | "plan" | "default" | "pipeline" | "goal" | "sidekick";
+export type ComposerSlashCommand =
+  | "model"
+  | "plan"
+  | "default"
+  | "pipeline"
+  | "goal"
+  | "sidekick"
+  | "side";
 export type ComposerSubmissionIntent = "foreground" | "background" | "alternate";
 
 export interface ComposerTrigger {
@@ -407,4 +414,9 @@ export function replaceTextRange(
   const safeEnd = Math.max(safeStart, Math.min(text.length, rangeEnd));
   const nextText = `${text.slice(0, safeStart)}${replacement}${text.slice(safeEnd)}`;
   return { text: nextText, cursor: safeStart + replacement.length };
+}
+
+export function parseComposerSidechatCommand(text: string): string | null {
+  const match = /^\/side(?:\s+([\s\S]*))?$/i.exec(text.trim());
+  return match ? (match[1]?.trim() ?? "") : null;
 }

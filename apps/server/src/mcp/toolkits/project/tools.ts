@@ -16,6 +16,11 @@ import {
   OrchestratorMcpFailure,
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
+  SpaceCommand,
+  CommandId,
+  SpaceId,
+  SpaceMutationResult,
+  SpacesSnapshot,
 } from "@t3tools/contracts";
 import * as FileSystem from "effect/FileSystem";
 import * as ServerConfig from "../../../config.ts";
@@ -30,6 +35,7 @@ import * as ThreadManagementService from "../../../orchestration-v2/ThreadManage
 import * as SourceControlRepositoryService from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as Spaces from "../../../spaces/SpaceService.ts";
 
 const shared = {
   success: Project,
@@ -151,6 +157,50 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
+const SpaceListTool = Tool.make("t3_space_list", {
+  ...shared,
+  description:
+    "List this environment's Spaces and project memberships. Projects without a membership belong to Void; Void has no stored row.",
+  parameters: Tool.EmptyParams,
+  success: SpacesSnapshot,
+  dependencies: [...shared.dependencies, Spaces.SpaceService],
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+
+const SpaceMutateTool = Tool.make("t3_space_mutate", {
+  ...shared,
+  description:
+    "Create, rename, reorder, delete, or assign projects to this environment's Spaces through the shared Space service. Use spaceId:null to return projects to Void. Deleting a Space preserves its projects and threads. commandId is generated when omitted; supply the same unique commandId and payload for a retry. Creation generates spaceId when omitted and returns it.",
+  parameters: Schema.Struct({
+    command: Schema.Union([
+      SpaceCommand.members[0].mapFields((fields) => ({
+        ...fields,
+        commandId: Schema.optional(CommandId),
+        spaceId: Schema.optional(SpaceId),
+      })),
+      SpaceCommand.members[1].mapFields((fields) => ({
+        ...fields,
+        commandId: Schema.optional(CommandId),
+      })),
+      SpaceCommand.members[2].mapFields((fields) => ({
+        ...fields,
+        commandId: Schema.optional(CommandId),
+      })),
+      SpaceCommand.members[3].mapFields((fields) => ({
+        ...fields,
+        commandId: Schema.optional(CommandId),
+      })),
+      SpaceCommand.members[4].mapFields((fields) => ({
+        ...fields,
+        commandId: Schema.optional(CommandId),
+      })),
+    ]),
+  }),
+  success: Schema.Struct({ ...SpaceMutationResult.fields, spaceId: Schema.optional(SpaceId) }),
+  dependencies: [...shared.dependencies, Spaces.SpaceService],
+}).annotate(Tool.Destructive, true);
+
 export const ProjectToolkit = Toolkit.make(
   ThreadLaunchTool,
   ProjectListTool,
@@ -159,4 +209,6 @@ export const ProjectToolkit = Toolkit.make(
   ProjectUpdateTool,
   ProjectDeleteTool,
   ProjectCloneTool,
+  SpaceListTool,
+  SpaceMutateTool,
 );

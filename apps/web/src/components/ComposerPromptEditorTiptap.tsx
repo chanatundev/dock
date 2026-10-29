@@ -1679,8 +1679,8 @@ function ComposerPromptEditorTiptapInner(
       scrollTiptapCaretIntoView(editor);
     }
     return () => {
-      // Capture focus before the keyed editor's DOM is removed.
-      restoreFocusRef.current = editor.view.hasFocus();
+      // Tiptap may detach its view before React cleans up the keyed editor.
+      restoreFocusRef.current = !editor.isDestroyed && editor.view.hasFocus();
     };
   }, [editor, restoreFocusRef]);
 

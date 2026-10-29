@@ -39,6 +39,17 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 export const RPC_REQUIRED_SCOPES = {
   ...CLIENT_GUARDED_RPC_SCOPES,
+  [WS_METHODS.spacesList]: AuthOrchestrationReadScope,
+  [WS_METHODS.spacesSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.tasksList]: AuthOrchestrationReadScope,
+  [WS_METHODS.tasksGet]: AuthOrchestrationReadScope,
+  [WS_METHODS.tasksHistory]: AuthOrchestrationReadScope,
+  [WS_METHODS.tasksSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.inboxReadRecap]: AuthOrchestrationReadScope,
+  [WS_METHODS.sidechatView]: AuthOrchestrationReadScope,
+  [WS_METHODS.sidechatReadContext]: AuthOrchestrationReadScope,
+  [WS_METHODS.sidechatOpen]: AuthOrchestrationOperateScope,
+  [WS_METHODS.sidechatSendToParent]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,

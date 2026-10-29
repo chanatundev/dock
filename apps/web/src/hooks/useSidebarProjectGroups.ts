@@ -3,11 +3,14 @@ import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalPro
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { useEnvironmentIdentities, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useQuietThreadShells } from "../state/entities";
+import { useDockSpaceProjectView } from "../state/spaces";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
 
-export function useSidebarProjectGroups() {
-  const projects = useProjects();
+export function useSidebarProjectGroups({ filterBySpace = false } = {}) {
+  const allProjects = useProjects();
+  const spaceView = useDockSpaceProjectView(allProjects);
+  const projects = filterBySpace ? spaceView.projects : allProjects;
   // Activity order lags a running thread's streaming ticks until its next
   // real change; reading every tick re-rendered the whole sidebar with it.
   const threads = useQuietThreadShells();

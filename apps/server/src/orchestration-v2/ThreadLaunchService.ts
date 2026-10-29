@@ -79,6 +79,7 @@ export interface ThreadLaunchInput {
   readonly threadId?: ThreadId;
   readonly reuseExistingThread?: boolean;
   readonly projectId: ProjectId;
+  readonly sidechat?: import("@t3tools/contracts").SidechatLaunchSource;
   readonly title: string;
   readonly generateTitle?: boolean;
   readonly modelSelection: ModelSelection;
@@ -835,6 +836,9 @@ const make = Effect.gen(function* () {
           "update-thread",
         )("Reusing an existing thread requires a thread id.");
       }
+      if (input.sidechat !== undefined && input.reuseExistingThread === true) {
+        return yield* mapError(input, "create-thread")("A side chat requires its own new thread.");
+      }
 
       const launchReceipt = yield* readReceipt(input, input.commandId);
       yield* threads.assertProviderInstanceEnabled({
@@ -914,6 +918,7 @@ const make = Effect.gen(function* () {
                 threadId: candidateThreadId,
                 projectId: input.projectId,
                 title: input.title,
+                ...(input.sidechat === undefined ? {} : { sidechat: input.sidechat }),
                 modelSelection: input.modelSelection,
                 runtimeMode: input.runtimeMode,
                 interactionMode: input.interactionMode,

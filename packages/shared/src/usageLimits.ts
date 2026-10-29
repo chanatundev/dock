@@ -134,7 +134,7 @@ const nativeReport = (provider: ServerProvider): AccountReport => ({
  * Pass every enabled login, read or not, so an unreadable workspace still
  * counts as one.
  */
-function accountKeyResolver(reports: Iterable<AccountReport>) {
+export function createUsageAccountKeyResolver(reports: Iterable<AccountReport>) {
   const workspaces = new Map<string, Set<string>>();
   for (const report of reports) {
     const key = accountKey(report.driver, report.email, report.usageLimits);
@@ -230,7 +230,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       },
     });
   };
-  const resolveKey = accountKeyResolver(
+  const resolveKey = createUsageAccountKeyResolver(
     [...presentations.values()].flatMap((presentation) => [
       ...(presentation.serverConfig?.providers ?? [])
         .filter((provider) => provider.enabled)
@@ -667,7 +667,7 @@ export function collectProviderUsageLimits(
 ): UsageLimitsReport | null {
   const selected = providers.find((provider) => provider.instanceId === instanceId);
   if (!selected || !hasProviderUsageLimits(selected.driver, providers, sources)) return null;
-  const resolveKey = accountKeyResolver([
+  const resolveKey = createUsageAccountKeyResolver([
     ...providers.filter((provider) => provider.enabled).map(nativeReport),
     ...sources.flatMap((source) => source.accounts),
   ]);

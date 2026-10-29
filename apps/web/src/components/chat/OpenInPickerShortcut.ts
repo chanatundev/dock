@@ -1,5 +1,5 @@
 import type { EditorId, EnvironmentId, ResolvedKeybindingsConfig } from "@t3tools/contracts";
-import { useEffect } from "react";
+import { useEffect, useEffectEvent } from "react";
 
 import { usePreferredEditor } from "../../editorPreferences";
 import { isOpenFavoriteEditorShortcut } from "../../keybindings";
@@ -13,13 +13,18 @@ export function useOpenFavoriteEditorShortcut({
   keybindings,
   availableEditors,
   openInCwd,
+  acceptsEventTarget,
 }: {
   enabled: boolean;
   environmentId: EnvironmentId;
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
+  acceptsEventTarget?: (target: EventTarget | null) => boolean;
 }) {
+  const ownsTarget = useEffectEvent(
+    (target: EventTarget | null) => acceptsEventTarget?.(target) !== false,
+  );
   const openInEditorMutation = useAtomCommand(shellEnvironment.openInEditor, "open in editor");
   const [preferredEditor] = usePreferredEditor(availableEditors);
   const remote = useRemoteOpenState(environmentId);
@@ -27,6 +32,7 @@ export function useOpenFavoriteEditorShortcut({
   useEffect(() => {
     if (!enabled || remote.mode !== "local-exec") return;
     const handler = (event: globalThis.KeyboardEvent) => {
+      if (!ownsTarget(event.target)) return;
       if (event.defaultPrevented || !isOpenFavoriteEditorShortcut(event, keybindings)) return;
       if (!openInCwd || !preferredEditor) return;
 

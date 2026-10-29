@@ -112,6 +112,8 @@ import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
+import * as SidechatContextService from "./orchestration-v2/SidechatContextService.ts";
+import * as SidechatService from "./orchestration-v2/SidechatService.ts";
 import * as CommandOutputHub from "./orchestration-v2/CommandOutputHub.ts";
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
@@ -119,6 +121,10 @@ import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts"
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
+import * as Spaces from "./spaces/SpaceService.ts";
+import * as Tasks from "./tasks/TaskService.ts";
+import * as InboxRecap from "./inbox/InboxRecapService.ts";
+import { summarizeDockTasks, summarizeDockTasksStreamItem } from "@t3tools/contracts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import {
   archivedShellStreamItemFromThreadShell,
@@ -155,6 +161,7 @@ import {
 } from "./orchestration-v2/threadHistoryPaging.ts";
 import {
   projectDomainEventForWire,
+  isClientVisibleOrchestrationEvent,
   projectThreadProjectionForWire,
 } from "./orchestration-v2/WireProjection.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
@@ -810,6 +817,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
           afterSequence,
         })
         .pipe(
+          Stream.filter((stored) => isClientVisibleOrchestrationEvent(stored.event)),
           Stream.map((stored) => ({
             kind: "event" as const,
             sequence: stored.sequence,
@@ -839,6 +847,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
           skipUnknownEventTypes: true,
         })
         .pipe(
+          Stream.filter((stored) => isClientVisibleOrchestrationEvent(stored.event)),
           Stream.map((stored) => ({
             kind: "event" as const,
             sequence: stored.sequence,
@@ -1225,6 +1234,8 @@ export const layerWsRpc = (
   Layer.effectContext(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
+      const sidechatContext = yield* SidechatContextService.SidechatContextService;
+      const sidechats = yield* SidechatService.SidechatService;
       const sql = yield* SqlClient.SqlClient;
       const threadManagement = yield* ThreadManagementService.ThreadManagementService;
       const intakeContext = yield* Effect.context<
@@ -1257,6 +1268,9 @@ export const layerWsRpc = (
       const commandOutputHub = yield* CommandOutputHub.CommandOutputHub;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
+      const spaces = yield* Spaces.SpaceService;
+      const tasks = yield* Tasks.TaskService;
+      const inboxRecap = yield* InboxRecap.InboxRecapService;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
@@ -2002,6 +2016,7 @@ export const layerWsRpc = (
                       : { reuseExistingThread: input.reuseExistingThread }),
                     projectId: input.projectId,
                     title: input.title,
+                    ...(input.sidechat === undefined ? {} : { sidechat: input.sidechat }),
                     ...(input.generateTitle === undefined
                       ? {}
                       : { generateTitle: input.generateTitle }),
@@ -2095,6 +2110,45 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.scheduledTasksList]: (_input) =>
           scheduledTasks.list().pipe(Effect.map(withVisibleWebhookUrls)),
+        [WS_METHODS.spacesList]: (_input) => spaces.list,
+        [WS_METHODS.spacesSubscribe]: (_input) => spaces.streamChanges,
+        [WS_METHODS.spacesDispatch]: (input) => spaces.dispatch(input),
+        [WS_METHODS.tasksList]: (_input) => tasks.list.pipe(Effect.map(summarizeDockTasks)),
+        [WS_METHODS.tasksGet]: (input) => tasks.get(input.taskId),
+        [WS_METHODS.tasksHistory]: (input) => tasks.history(input),
+        [WS_METHODS.inboxReadRecap]: (input) => inboxRecap.read(input),
+        [WS_METHODS.sidechatView]: (input) =>
+          Stream.unwrap(
+            orchestrationEngine.acquireSidechatView(input.threadId).pipe(
+              Effect.as(Stream.concat(Stream.succeed({ threadId: input.threadId }), Stream.never)),
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationV2GetThreadProjectionError({
+                    threadId: input.threadId,
+                    message: "Could not register the side-chat view.",
+                    cause,
+                  }),
+              ),
+            ),
+          ),
+        [WS_METHODS.sidechatReadContext]: (input) => sidechatContext.read(input),
+        [WS_METHODS.sidechatOpen]: (input) =>
+          sidechats.open(input, {
+            createdBy: "user",
+            creationSource: input.creationSource ?? "web",
+          }),
+        [WS_METHODS.sidechatSendToParent]: (input) =>
+          sidechats.sendToParent(input, {
+            createdBy: "user",
+            creationSource: input.creationSource ?? "web",
+          }),
+        [WS_METHODS.tasksSubscribe]: (_input) =>
+          tasks.streamChanges.pipe(Stream.map(summarizeDockTasksStreamItem)),
+        [WS_METHODS.tasksDispatch]: (input) =>
+          tasks.dispatch(input.command, {
+            createdBy: "user",
+            creationSource: input.creationSource ?? "web",
+          }),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
         [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),
